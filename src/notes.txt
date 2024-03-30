@@ -1,0 +1,19 @@
+
+
+------------
+Calculating background animation
+
+Start frame: 370
+End frame: 414
+Screen rate: 61.035156hz
+
+Total: 44 frames
+
+44/61.035156 = 720ms
+-------
+Color notes for drawing castle
+- If color is 0x1F or , draw white.
+- TODO: figure out which color is red.
+- If its any color other than red or white, draw black
+
+

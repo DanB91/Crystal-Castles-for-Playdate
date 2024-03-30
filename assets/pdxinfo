@@ -1,0 +1,5 @@
+name=Crystal Castles
+author=Daniel Bokser
+description=Port of the arcade game Crystal Castles
+bundleID=com.danielbokser.crystalcastles
+imagePath=images
