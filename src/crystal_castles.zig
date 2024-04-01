@@ -20,6 +20,208 @@ pub const Y_COORDINATE_OFFSET = 0x18;
 //a "level" as a  Super Mario Bros world.
 const WAVE_DATA_SIZE = 0x400;
 
+const LETTER_BITMAPS = [_]u8{
+    0b11111000,
+    0b11111000,
+    0b00101000,
+    0b00101000,
+    0b11111000,
+
+    0b11111000,
+    0b10101000,
+    0b10101000,
+    0b11111000,
+    0b11011000,
+
+    0b11111000,
+    0b11111000,
+    0b10001000,
+    0b10001000,
+    0b10011000,
+
+    0b11111000,
+    0b11111000,
+    0b10001000,
+    0b10001000,
+    0b01110000,
+
+    0b11111000,
+    0b11111000,
+    0b10101000,
+    0b10001000,
+    0b10001000,
+
+    0b11111000,
+    0b11111000,
+    0b00101000,
+    0b00001000,
+    0b00001000,
+
+    0b11111000,
+    0b11111000,
+    0b10001000,
+    0b10101000,
+    0b11101000,
+
+    0b11111000,
+    0b11111000,
+    0b00100000,
+    0b00100000,
+    0b11111000,
+
+    0b10001000,
+    0b10001000,
+    0b11111000,
+    0b10001000,
+    0b10001000,
+
+    0b11000000,
+    0b10001000,
+    0b11111000,
+    0b11111000,
+    0b00001000,
+
+    0b11111000,
+    0b00100000,
+    0b01110000,
+    0b11011000,
+    0b10001000,
+
+    0b11111000,
+    0b11111000,
+    0b10000000,
+    0b10000000,
+    0b10000000,
+
+    0b11111000,
+    0b00110000,
+    0b01100000,
+    0b00110000,
+    0b11111000,
+
+    0b11111000,
+    0b00011000,
+    0b00110000,
+    0b01100000,
+    0b11111000,
+
+    0b11111000,
+    0b11111000,
+    0b10001000,
+    0b10001000,
+    0b11111000,
+
+    0b11111000,
+    0b11111000,
+    0b00101000,
+    0b00101000,
+    0b00111000,
+
+    0b11111000,
+    0b10001000,
+    0b10001000,
+    0b11001000,
+    0b11111000,
+
+    0b11111000,
+    0b11111000,
+    0b00101000,
+    0b11101000,
+    0b00111000,
+
+    0b10111000,
+    0b10111000,
+    0b10101000,
+    0b11101000,
+    0b11101000,
+
+    0b00001000,
+    0b00001000,
+    0b11111000,
+    0b00001000,
+    0b00001000,
+
+    0b11111000,
+    0b11111000,
+    0b10000000,
+    0b10000000,
+    0b11111000,
+
+    0b00111000,
+    0b01100000,
+    0b11000000,
+    0b01100000,
+    0b00111000,
+
+    0b11111000,
+    0b01100000,
+    0b00110000,
+    0b01100000,
+    0b11111000,
+
+    0b10001000,
+    0b01010000,
+    0b00100000,
+    0b01010000,
+    0b10001000,
+
+    0b00011000,
+    0b00110000,
+    0b11100000,
+    0b00110000,
+    0b00011000,
+
+    0b10001000,
+    0b11001000,
+    0b11101000,
+    0b10111000,
+    0b10011000,
+
+    // 64 space
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+
+    // 65 life symbol
+
+    0b01101000,
+    0b11010000,
+    0b11110000,
+    0b11010000,
+    0b01101000,
+
+    // 66, slash used in 1/2
+
+    0b10000000,
+    0b01000000,
+    0b00100000,
+    0b00010000,
+    0b00001000,
+
+    // 67, questionmark
+    0b00001000,
+    0b00001000,
+    0b10101000,
+    0b00111000,
+    0b00010000,
+
+    // 68  colon
+    0b00000000,
+    0b00000000,
+    0b10010000,
+    0b00000000,
+    0b00000000,
+
+    // 69
+    0b00100000,
+    0b00100000,
+    0b10101000,
+    0b01110000,
+    0b00100000,
+};
+
 pub const Dimension = isize;
 pub const V2 = @Vector(2, Dimension);
 pub const Color = enum(u8) {
@@ -114,7 +316,24 @@ pub const GameState = struct {
 
     has_tunnel: bool = false, //CT.TUN
 
-    current_wave_data: [WAVE_DATA_SIZE]u8 = undefined,
+    current_wave_data: [WAVE_DATA_SIZE]u8 = undefined, //CTRAM,
+
+    scoreboard: Scoreboard = .{},
+};
+const Scoreboard = struct {
+    //         HFSIZ=250.
+    // SC.HS1:	.BLKB HFSIZ	;  high scores
+    // SC.HS2: .BLKB HFSIZ
+    // SC.HS3:	.BLKB HFSIZ
+    // SC.HI1:	.BLKB HFSIZ	;  and initials
+    // SC.HI2: .BLKB HFSIZ
+    // SC.HI3: .BLKB HFSIZ
+    entries: [250]Entry = [_]Entry{.{}} ** 250,
+
+    const Entry = struct {
+        name: toolbox.String8 = toolbox.str8lit("DAN"),
+        score: isize = 0,
+    };
 };
 
 pub fn init(game_state: *GameState, global_arena: *toolbox.Arena) void {
@@ -128,9 +347,7 @@ pub fn init(game_state: *GameState, global_arena: *toolbox.Arena) void {
 
 pub fn reset(game_state: *GameState) void {
     const draw_line_command_queue = game_state.draw_command_queue;
-    //TODO: put back
-    // const rand = toolbox.init_random(@bitCast(toolbox.now().microseconds()));
-    const rand = toolbox.init_random(1);
+    const rand = toolbox.init_random(@bitCast(toolbox.now().microseconds()));
     game_state.* = .{
         .global_arena = game_state.global_arena,
         .draw_command_queue = draw_line_command_queue,
@@ -481,23 +698,109 @@ fn initialize_castle(game_state: *GameState) void {
         }
         advance_castle_row(game_state);
     }
-    //TODO:
-    //put in tunnel for warp
-    //also put in high score initials
-    // if (game_state.wv_xco == 0 and game_state.wv_yco == 0) {
-    //     game_state.temp4 = 4;
-    //     while (game_state.temp4 <= 0) : (game_state.temp4 -= 1) {
-    //         //CT.HIN
-    //         //put in initial
-    //         {
-    //             //TODO
-    //         }
-    //     }
+    if (game_state.wave_xco == 0 and game_state.wave_yco == 0) {
+        for (0..5) |initial| {
+            add_high_score_initial_to_castle(initial, game_state);
+        }
+    }
 
+    //TODO:
     //     if (game_state.warp_level > 0 and !game_state.attract_mode) {
-    //         //Don't care about this right now
+    //         //Putting in tunnel for warp, Don't care about this right now
     //     }
     // }
+}
+fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState) void {
+    // CT.HSS: .WORD SC.HI1+HFSIZ-1,SC.HI2+HFSIZ-1,SC.HI3+HFSIZ-1
+    // 	.WORD SC.HI2+HFSIZ-1,SC.HI3+HFSIZ-1
+    const initials = [_]toolbox.Rune{
+        game_state.scoreboard.entries[0].name.rune_at(0).rune,
+        game_state.scoreboard.entries[0].name.rune_at(1).rune,
+        game_state.scoreboard.entries[0].name.rune_at(2).rune,
+        game_state.scoreboard.entries[0].name.rune_at(1).rune,
+        game_state.scoreboard.entries[0].name.rune_at(2).rune,
+    };
+    // ;  get initial
+    // LDA TEMP4
+    // ASL
+    // TAX
+    // LDA PL.UP
+    // IFEQ		;  player 1
+    //  LDA CT.HSS(X)
+    //  STA TEMP1
+    //  LDA 1+CT.HSS(X)
+    // ELSE		;  player 2
+    //  LDA CT.HS2(X)
+    //  STA TEMP1
+    //  LDA 1+CT.HS2(X)
+    // ENDIF
+
+    // STA 1+TEMP1
+    //NOTE: for above, ignore player 2 code
+
+    // CT.RMS: .WORD CTRAM+<6*16>+2,CTRAM+<6*16>+7,CTRAM+<6*16>+0C
+    // 	.WORD CTRAM+<0B*16>+2,CTRAM+<10*16>+2
+    const castle_rms = [_]usize{
+        (0x6 * 0x16) + 2, (0x6 * 0x16) + 7,  (0x6 * 0x16) + 0xC,
+        (0xB * 0x16) + 2, (0x10 * 0x16) + 2,
+    };
+    // TR16AM CT.RMS(X) CT.ADL
+    game_state.castle_adl = castle_rms[initial_index];
+
+    // LDY #0
+    // LDA @TEMP1(Y)		;  now have initial
+    // SUB #4A
+
+    // STA TEMP1	;  mult by 5 so (A) points to sym
+    // ASLS 2
+    // ADD TEMP1
+    // STA TEMP1
+    var letter_bitmap_array_cursor = (initials[initial_index] - 'A') * 5;
+
+    // TRAI 4 TEMP3
+    // BEGIN
+    for (0..5) |_| {
+
+        // LDX TEMP1
+        // LDA AL.55L(X)
+        // STA TEMP5
+        var character_row = LETTER_BITMAPS[letter_bitmap_array_cursor];
+
+        // LDX #4
+        // BEGIN
+        for (0..5) |_| {
+            // ASL TEMP5
+            // IFCS
+            if (character_row & 0x80 != 0) {
+                //  LDA @CT.ADL(Y)
+                //  ADD #0A
+                //  STA @CT.ADL(Y)
+                game_state.current_wave_data[game_state.castle_adl] += 0xA;
+                //  JSR BL.IN2
+                initialize_block_2(game_state);
+                //  LDA @CT.A2L(Y)
+                //  AND #^B11111011	;  Accessibility=0
+                //  STA @CT.A2L(Y)
+                game_state.current_wave_data[game_state.castle_a2l] &=
+                    ~@as(u8, 0b11111011);
+
+                // ENDIF
+            }
+            character_row <<= 1;
+            // SB16AI CT.ADL 16
+            game_state.castle_adl -= 0x16;
+            // DEX
+            // MIEND
+        }
+
+        // AD16AI CT.ADL 16*5+1
+        game_state.castle_adl += 0x16 * 5 + 1;
+
+        // INC TEMP1
+        letter_bitmap_array_cursor += 1;
+        // DEC TEMP3
+        // MIEND
+    }
 }
 //CR.INI
 fn initialize_castle_row(game_state: *GameState) void {
@@ -768,10 +1071,6 @@ fn set_bitmap_values_of_faces(face: u8, game_state: *GameState) void {
     }
 }
 fn color_value_to_color(color_value: u8) Color {
-    //TODO: figure out when Red is drawn
-    // if (color_value & 0x20 != 0) {
-    //     return .Red;
-    // }
 
     //Only top 4 bits are used
     return switch ((color_value >> 4) & 0xF) {
@@ -791,7 +1090,6 @@ fn color_value_to_color(color_value: u8) Color {
 // ;  routine to determine edge switches
 // BL.EDT
 fn determine_edge_switches(game_state: *GameState) void {
-    //TODO:
     const wave_data = game_state.current_wave_data;
     const adl = game_state.castle_adl;
 
@@ -1228,7 +1526,6 @@ fn compute_face2(game_state: *GameState) void {
 }
 //FACE3:
 fn compute_face3(game_state: *GameState) void {
-    //TODO
     //  TRAI CT.XSZ LN.LG1
     var number_of_line_1_segments: isize = 4;
     // 	TRAI CT.YSZ CURLIN

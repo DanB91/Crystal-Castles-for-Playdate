@@ -29,6 +29,9 @@ pub fn playdate_panic(
         },
         else => {
             //playdate simulator
+            if (toolbox.IS_DEBUG) {
+                @breakpoint();
+            }
             var stack_trace_buffer = [_]u8{0} ** 4096;
             var buffer = [_]u8{0} ** 4096;
             var stream = std.io.fixedBufferStream(&stack_trace_buffer);

@@ -141,10 +141,25 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     return 1;
 }
 
-pub fn update_castle_bitmap(dt: toolbox.Duration, platform_state: *PlatformState) void {
-    const dt_ms = dt.milliseconds();
-    const LINES_PER_MS = 10;
-    const number_of_lines_to_draw: usize = @intCast(LINES_PER_MS * dt_ms);
+const ENABLE_CRANK_TO_DRAW = false;
+pub fn update_castle_bitmap(
+    dt: toolbox.Duration,
+    platform_state: *PlatformState,
+) void {
+    const number_of_lines_to_draw: usize = b: {
+        if (ENABLE_CRANK_TO_DRAW) {
+            const crank_change = pdapi.get_crank_change();
+            if (crank_change <= 0) {
+                return;
+            }
+            const LINES_PER_DEGREE = 5;
+            break :b @intFromFloat(LINES_PER_DEGREE * crank_change);
+        } else {
+            const dt_ms = dt.milliseconds();
+            const LINES_PER_MS = 10;
+            break :b @intCast(LINES_PER_MS * dt_ms);
+        }
+    };
     const castle_bitmap_data = pdapi.get_bitmap_data(platform_state.castle_bitmap);
 
     const game_state = platform_state.game_state;
@@ -153,14 +168,14 @@ pub fn update_castle_bitmap(dt: toolbox.Duration, platform_state: *PlatformState
             const StaticVars = struct {
                 var line_number: isize = 0;
             };
-            toolbox.println("{}: Shape: {s}, Color: {s}, Seg: {}, X: 0x{X}, Y: 0x{X}", .{
-                StaticVars.line_number,
-                @tagName(command.shape),
-                @tagName(command.color),
-                command.number_of_segments,
-                command.position[0],
-                command.position[1] + cc.Y_COORDINATE_OFFSET,
-            });
+            // toolbox.println("{}: Shape: {s}, Color: {s}, Seg: {}, X: 0x{X}, Y: 0x{X}", .{
+            //     StaticVars.line_number,
+            //     @tagName(command.shape),
+            //     @tagName(command.color),
+            //     command.number_of_segments,
+            //     command.position[0],
+            //     command.position[1] + cc.Y_COORDINATE_OFFSET,
+            // });
             StaticVars.line_number += 1;
             switch (command.shape) {
                 .Line1 => draw_line1(
