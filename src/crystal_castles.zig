@@ -14,13 +14,9 @@ const level_data = @embedFile("levels.bin");
 //We need to take this into account here.
 pub const Y_COORDINATE_OFFSET = 0x18;
 
-//A "wave" is a sub-division of a "level".
-//There are 4 waves per level except level 10 which only has 1 wave
-//You can kind of think of a "wave" as Super Mario Bros level and
-//a "level" as a  Super Mario Bros world.
-const WAVE_DATA_SIZE = 0x400;
-
-const LETTER_BITMAPS = [_]u8{
+pub const LETTER_BITMAP_HEIGHT = 5;
+pub const LETTER_BITMAP_WIDTH = 5;
+pub const LETTER_BITMAPS = [_]u8{
     0b11111000,
     0b11111000,
     0b00101000,
@@ -221,6 +217,183 @@ const LETTER_BITMAPS = [_]u8{
     0b01110000,
     0b00100000,
 };
+const WORDS = [_][]const u8{
+    "INSERT[COIN",
+    "COIN",
+    "EEROM",
+    "OVER",
+    "GET",
+    "READY",
+    "PRESS[START",
+    "START",
+    "CREDITS",
+    "GAME",
+    "PLAYER",
+    "8",
+    "9",
+    "8]9",
+    "CRYSTAL",
+    "CASTLES",
+    "PASSED",
+    "GET",
+    "HIGH[SCORE",
+    "GEMS",
+    "BENTLEY",
+    "BEAR",
+    "AT[PC",
+    "COPYRIGHT",
+    "8@?:[ATARI",
+    "ALL[RIGHTS",
+    "RESERVED",
+    ":",
+    ";",
+    "<",
+    "=",
+    "CLEAR",
+    "CHECKSUM[FOR[ROM",
+    "LEVEL",
+    ";A",
+    "EXTRA",
+    "EVERY[>7777",
+    ";B",
+    "TREE",
+    "WAVE",
+    "TRACKBALL",
+    "BERTHILDAS",
+    "CASTLE",
+    "HOR",
+    "NASTY",
+    "TUNNEL",
+    "ELEVATOR",
+    "FXL",
+    "PYRAMID",
+    "VERT",
+    "OVER[TREES",
+    "GREEN",
+    "BLUE",
+    "FORTRESS",
+    "RED",
+    "IMPOSSIBLE",
+    "STAIRCASE",
+    "STUN[THEM",
+    "DOOMSDOME",
+    "EATERS",
+    "CROSS",
+    "MAZE",
+    "DUNGEON",
+    "DIFFICULTY",
+    "CROSSROADS",
+    "MORE",
+    "TUNNELS",
+    "STARTING",
+    "PALACE",
+    "HIDDEN",
+    "YOU",
+    "GOT",
+    "THE",
+    "LAST",
+    "GEM",
+    "THEY",
+    "NO",
+    "BONUS",
+    "RESET",
+    "FREE[PLAY",
+    "HALL",
+    "OF",
+    "FAME",
+    "ENTER",
+    "YOUR",
+    "INITIALS",
+    "BUTTON",
+    "WARP",
+    "EATING",
+    "SPIRAL",
+    "PRESS",
+    "RESTORE[FACTORY",
+    "HINTS",
+    "MAGIC[HAT[MAKES[YOU[INVINCIBLE",
+    "WEAR",
+    "CAN[KILL[BERTHILDA",
+    "CATCH",
+    "WHEN[THEY[ARE",
+    "STAY[AWAY",
+    "MOVING[FROM",
+    "TAKE[TOO[MUCH",
+    "SWARM[RETURNS",
+    "ACCOUNTING",
+    "AUX",
+    "LEFT",
+    "RIGHT",
+    "COINS",
+    "TOTAL",
+    "GAMES",
+    "PLAYED",
+    "PAID",
+    "AVERAGE",
+    "TIME",
+    "HISTOGRAM",
+    "ADVANCE",
+    "SELECT",
+    "WITH",
+    "TEST",
+    "GRID",
+    "OPTIONS",
+    "SWITCH",
+    "TO",
+    "EXIT",
+    "RAM",
+    "ROM",
+    "OK",
+    "FAILURE",
+    "SELF",
+    "JUMP",
+    "VALUE",
+    "MECH",
+    "EEROM",
+    "9[CREDITS",
+    "8[CREDIT",
+    "8]9[CREDIT",
+    "8K_",
+    "8L_",
+    "8N_",
+    "8H_",
+    "8F_",
+    "USE[SECRET",
+    "NUMBER",
+    "AT",
+    "CORNER",
+    "MEDIUM",
+    "HARD",
+    "HARDEST",
+    "EASY",
+    "I[GIVE[UP[_[YOU[WIN",
+    "MUST[BE",
+    "END",
+    "LIVES",
+    "BACK",
+    "IT",
+    "AND",
+    "HAT",
+    "BOTTOM",
+    "ON",
+    "RAMP",
+    "VERY",
+    "RIDICULOUSLY",
+    "AMAZINGLY",
+    "FANTASTICALLY",
+    "AN[EXPERT",
+    "GOOD",
+    "YES",
+    "A[VIDEO[WHIZ",
+    "[",
+    "[",
+};
+
+//A "wave" is a sub-division of a "level".
+//There are 4 waves per level except level 10 which only has 1 wave
+//You can kind of think of a "wave" as Super Mario Bros level and
+//a "level" as a  Super Mario Bros world.
+const WAVE_DATA_SIZE = 0x400;
 
 pub const Dimension = isize;
 pub const V2 = @Vector(2, Dimension);
@@ -233,11 +406,20 @@ pub const Color = enum(u8) {
 };
 const DrawCommand = struct {
     shape: Shape,
-    number_of_segments: isize = 0, //only used for lines
+    number_of_segments: isize = 0, // used for lines and screen erase
+    character: u8 = 0, //only used for characters
     position: V2,
     color: Color,
 
-    const Shape = enum { None, Line1, Line2, Line3, Pixel };
+    const Shape = enum {
+        None,
+        Line1,
+        Line2,
+        Line3,
+        Character,
+        ScreenErase,
+        Pixel,
+    };
 };
 pub const GameState = struct {
     draw_command_queue: toolbox.RingQueue(DrawCommand),
@@ -248,8 +430,11 @@ pub const GameState = struct {
         DrawBackground,
         DrawCastle,
         DrawCastleRow,
-        DoneDrawingCastle,
+        DrawCreditsInserted,
+        AttractModeMainLoop,
     } = .DrawBackground,
+
+    is_in_attract_mode: bool = false, //ATRACT
 
     //wave specific state
     wave_offset: isize = 0, //WV.OFF
@@ -262,6 +447,8 @@ pub const GameState = struct {
     wave_difficulty_offset: isize = 0, //WV.DF0
     wave_short_term_difficulty: isize = 0, //WV.DF1
     wave_long_term_difficulty: isize = 0, //WV.DF2
+    wave_time: isize = 0, //WV.TIM
+    wave_enable_warp: bool = false, //WV.WAR
 
     wave_scroll_flag: enum { NoScroll, Right, Left, Up } = .NoScroll, //WV.SCF
 
@@ -314,8 +501,14 @@ pub const GameState = struct {
     face_color_values: [7]u8 = undefined, //FC.BV
     face3_color_value_hidden_or_not: u8 = 0, //CT.BV3
 
+    main_loop_delay: isize = 0, //MN.DEL
+
     has_tunnel: bool = false, //CT.TUN
 
+    lives: isize = 0, //P1.LIV
+
+    frame: isize = 0, //FRAME
+    number_of_credits: isize = 0, //$$CRDT or $CNCT
     current_wave_data: [WAVE_DATA_SIZE]u8 = undefined, //CTRAM,
 
     scoreboard: Scoreboard = .{},
@@ -382,25 +575,352 @@ pub fn update(dt: toolbox.Duration, game_state: *GameState) void {
             }
         },
         .DrawCastle => {
-            compute_castle(game_state);
+            draw_castle(game_state);
             game_state.current_state = .DrawCastleRow;
         },
         .DrawCastleRow => {
-            compute_castle_row(game_state);
+            draw_castle_row(game_state);
             game_state.castle_row_count -= 1;
             if (game_state.castle_row_count < 0) {
-                game_state.current_state = .DoneDrawingCastle;
+                game_state.current_state = .DrawCreditsInserted;
                 return;
             }
             advance_castle_row(game_state);
         },
-        .DoneDrawingCastle => {},
+        .DrawCreditsInserted => {
+            // JSR AL.BER
+            erase_board();
+            // LDA #10
+            // JSR MS.DRW		;  credits
+            draw_message(0x10, game_state);
+
+            //TODO:
+            // LDA WV.WAR
+            // IFNE
+            //  LDA #1A
+            //  JSR MS.DRW		;  warp message
+            //  TRAI 0C3 AL.X
+            //  TRAI 3B AL.Y
+            //  TRAM SC.HS1+HFSIZ-1 SC.NM
+            //  TRAM SC.HS2+HFSIZ-1 SC.NM+1
+            //  TRAM SC.HS3+HFSIZ-1 SC.NM+2
+            //  JSR SC.NDS		;  display high score
+            //  LDA #10	        ; wait 40 seconds before
+            // ELSE			; deactivating warp
+            //  LDA #1
+            game_state.main_loop_delay = 0x100;
+            // ENDIF
+            // STA 1+MN.DEL
+
+            game_state.current_state = .AttractModeMainLoop;
+        },
+        .AttractModeMainLoop => {
+            update_attract_mode(game_state);
+        },
     }
 }
 
 //MN.SNI
 fn initialize_sounds() void {
     //TODO:
+}
+
+//AL.BER
+fn erase_board() void {
+    //TODO
+}
+
+//This MS.TAB is a list of pointers, but that seems kind of unncessary.
+//This will contain all of the data that those pointers pointed to, flattened out
+const MESSAGE_DATA = [_][]const u8{
+    //  maze titles
+    //  get the gems bentley bear
+    //MC.M00:
+    &.{
+        0xB1, 0x28,
+        0x2,  0x1B,
+        0x52, 0x3,
+        0x1D, 0x2,
+        0x1E, 0x3,
+        0x1F,
+    },
+
+    //  extra life
+    //MC.M01:
+    &.{
+        0xB1,
+        0x30,
+        0x2D,
+        0xA1,
+        0x0,
+        0x2E,
+    },
+
+    //  tree wave
+    //MC.M02:
+    &.{
+        0x0B1,
+        0x30,
+        0x30,
+        0x31,
+    },
+
+    //  berthildas castle
+    //MC.M03:
+    &.{
+        0xB1,
+        0x30,
+        0x33,
+        0x2,
+        0x34,
+    },
+
+    //  pyramid
+    //MC.M04:
+    &.{
+        0xB1,
+        0x2E,
+        0x3A,
+    },
+
+    //  hidden spiral
+    //MC.M05:
+    &.{
+        0x0B1,
+        0x30,
+        0x4F,
+        0x0,
+        0x63,
+    },
+
+    //  hidden ramp
+    //MC.M06:
+    &.{
+        0xB1,
+        0x30,
+        0x4F,
+        0xA8,
+    },
+
+    //  berthildas fortress
+    //MC.M07:
+    &.{
+        0x0B1,
+        0x30,
+        0x33,
+        0x0,
+        0x3F,
+    },
+
+    //  impossible staircase
+    //MC.M08:
+    &.{
+        0x0B1,
+        0x30,
+        0x41,
+        0x0,
+        0x42,
+    },
+
+    //  maze 1
+    //MC.M09:
+    &.{
+        0xB1,
+        0x30,
+        0x44,
+    },
+
+    //  cross maze
+    //MC.M0A:
+    &.{
+        0xB1,
+        0x30,
+        0x46,
+        0x47,
+    },
+
+    //  berthildas dungeon
+    //MC.M0B:
+    &.{
+        0xB1,
+        0x30,
+        0x33,
+        0x0,
+        0x48,
+    },
+
+    //  crossroads
+    //MC.M0C:
+    &.{
+        0xB1,
+        0x30,
+        0x4A,
+    },
+
+    //  nasty tree
+    //MC.M0D:
+    &.{
+        0xB1,
+        0x30,
+        0x36,
+        0x30,
+    },
+
+    //   the end
+    //MC.M0E:
+    &.{
+        0xB1,
+        0x30,
+        0x52,
+        0x0A0,
+    },
+
+    //  berthildas palace
+    //MC.M0F:
+    &.{
+        0xB1,
+        0x30,
+        0x33,
+        0x0,
+        0x4E,
+    },
+
+    //  credits
+    //MC.M10:
+    &.{
+        0xC0,
+        0x50,
+        0x12,
+    },
+
+    //  get ready
+    //MC.M11:
+    &.{
+        0x60, 0x80, 0xE, 0xF,
+    },
+};
+
+//MS.DRW
+fn draw_message(message_number: usize, game_state: *GameState) void {
+    // ASL
+    // TAX
+
+    // .IF NE,CG.ST
+    // TR16AM MS.TAB(X) MS.PTR
+    // INXS 2
+    // TR16AM MS.TAB(X) MS.LEN
+
+    // .ENDC
+
+    // SB16AM MS.LEN MS.PTR
+    const msg = MESSAGE_DATA[message_number];
+
+    // TRAI 07F AL.COL
+    const letter_color_value = 0x7F;
+    // LDY #1
+    // TRAM @MS.PTR(Y) AL.Y
+    // DEY
+    // TRAM @MS.PTR(Y) AL.X
+    var position = V2{ msg[0], msg[1] };
+    // STA AL.LMG		;  left margin
+    const left_margin = position[0];
+
+    // SBAI 2 MS.LEN
+
+    // BEGIN			;  loop through words
+    for (2..msg.len) |i| {
+        //  LDY #2
+        //  LDA @MS.PTR(Y)		;  word number
+        var word_number: isize = msg[i];
+        //  CMP #0A			;  if not CR-directive
+        //  IFCS
+        if (word_number >= 0xA) {
+            //   JSR WR.DRW
+            draw_word(
+                word_number,
+                &position,
+                letter_color_value,
+                game_state,
+            );
+        }
+        //  ELSE
+        else {
+            //   CMP #6
+            //   IFPL		;  6,7,8 map to 8,12.,16.
+            if (word_number >= 6) {
+                //    ASLS 2
+                //    SUB #10
+                word_number = word_number * 4 - 0x10;
+                //   ENDIF
+            }
+            //   ASL
+            //   STA TEMP1
+            //   ASL
+            //   ADD TEMP1
+            //   ADD AL.LMG	; 0B1+6*CRdirective
+            word_number = (word_number * 4) + (word_number * 2) + left_margin;
+            //   STA AL.X	; hor position
+            //   ADAI 08 AL.Y  ; vert position
+            position = .{ word_number, position[1] + 8 };
+            //  ENDIF
+        }
+        // INC16 MS.PTR
+        // DEC MS.LEN
+        // EQEND
+    }
+}
+
+//WR.DRW
+fn draw_word(
+    word_number: isize,
+    position: *V2,
+    color_value: u8,
+    game_state: *GameState,
+) void {
+    // SUB #0A
+    const word_index: usize = @intCast(word_number - 0xA);
+    // ASL				;  up to 246 words
+    // STA TEMP1
+    // IFCC
+    //  TRAI 0 1+TEMP1
+    // ELSE
+    //  TRAI 1 1+TEMP1
+    // ENDIF			;  TEMP1,1+TEMP1  cointain table offset
+    // TR16AI WR.TAB WR.TPT
+    // AD16AM WR.TPT TEMP1	; points to table entry of word
+    // LDY #0
+    // TRAM @WR.TPT(Y) WR.PTR
+    // INY
+    // TRAM @WR.TPT(Y) WR.PTR+1
+    // INY
+    // TRAM @WR.TPT(Y) WR.LEN	;  next word
+    // INY
+    // TRAM @WR.TPT(Y) WR.LEN+1
+    // SB16AM WR.LEN WR.PTR
+    const word = WORDS[word_index];
+    const color = color_value_to_color(color_value);
+    // BEGIN
+    for (word) |char| {
+        //  LDY #0
+        //  TRAM @WR.PTR(Y) AL.DIG
+        //  JSR AL.DRW
+        add_draw_character_command(
+            char,
+            color,
+            position.*,
+            game_state,
+        );
+
+        //  LDA AL.X
+        //  ADD #6		;  works only for 5x5
+        //  STA AL.X
+        position.*[0] += 6;
+
+        // INC16 WR.PTR
+        // DEC WR.LEN
+        // EQEND
+    }
+    // ADAI 6 AL.X
 }
 
 //RS.INI
@@ -699,7 +1219,8 @@ fn initialize_castle(game_state: *GameState) void {
         advance_castle_row(game_state);
     }
     if (game_state.wave_xco == 0 and game_state.wave_yco == 0) {
-        for (0..5) |initial| {
+        const NUMBER_OF_INITIALS = 5;
+        for (0..NUMBER_OF_INITIALS) |initial| {
             add_high_score_initial_to_castle(initial, game_state);
         }
     }
@@ -759,7 +1280,7 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
 
     // TRAI 4 TEMP3
     // BEGIN
-    for (0..5) |_| {
+    for (0..LETTER_BITMAP_HEIGHT) |_| {
 
         // LDX TEMP1
         // LDA AL.55L(X)
@@ -768,7 +1289,7 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
 
         // LDX #4
         // BEGIN
-        for (0..5) |_| {
+        for (0..LETTER_BITMAP_WIDTH) |_| {
             // ASL TEMP5
             // IFCS
             if (character_row & 0x80 != 0) {
@@ -861,7 +1382,7 @@ fn advance_castle_row(game_state: *GameState) void {
     game_state.castle_row_position += .{ -4, 4 };
 }
 //CT.DRW
-fn compute_castle(game_state: *GameState) void {
+fn draw_castle(game_state: *GameState) void {
     // ;  traverse through rows
     // TR16AI CTRAM CT.ACL
     game_state.castle_acl = 0;
@@ -873,19 +1394,10 @@ fn compute_castle(game_state: *GameState) void {
     game_state.castle_all = 0 + 0x13 + 0x3; //0x16
 
     initialize_castle_row(game_state);
-
-    // while (true) {
-    //     compute_castle_row(game_state);
-    //     game_state.castle_row_count -= 1;
-    //     if (game_state.castle_row_count < 0) {
-    //         break;
-    //     }
-    //     advance_castle_row(game_state);
-    // }
 }
 
 //CR.DRW
-fn compute_castle_row(game_state: *GameState) void {
+fn draw_castle_row(game_state: *GameState) void {
     initialize_block(game_state);
     const wave_data = &game_state.current_wave_data;
 
@@ -984,7 +1496,7 @@ fn compute_castle_row(game_state: *GameState) void {
         determine_edge_switches(game_state);
 
         if (game_state.castle_block_height != 0) {
-            compute_block(game_state);
+            draw_block(game_state);
         }
 
         // 	INC16 CT.ADL
@@ -1016,7 +1528,7 @@ fn compute_castle_row(game_state: *GameState) void {
     game_state.castle_all += 2;
 }
 //BL.DRW
-fn compute_block(game_state: *GameState) void {
+fn draw_block(game_state: *GameState) void {
     //  TRAM BL.HST FC.HST
     // TRAM BL.VST FC.VST
     game_state.face_position = game_state.castle_block_position;
@@ -1026,30 +1538,274 @@ fn compute_block(game_state: *GameState) void {
     game_state.face_v1s = game_state.castle_block_v1s;
     game_state.face_v1n = game_state.castle_block_v1n;
     // JSR FACE1
-    compute_face1(game_state);
+    draw_face1(game_state);
 
     // TRAM BL.V2S FC.V2S
     // TRAM BL.V2N FC.V2N
     game_state.face_v2s = game_state.castle_block_v2s;
     game_state.face_v2n = game_state.castle_block_v2n;
     // JSR FACE2
-    compute_face2(game_state);
+    draw_face2(game_state);
 
     // LDA FC.VST
     // SUB BL.HEI
     // STA FC.VST
     game_state.face_position[1] -= game_state.castle_block_height;
     // JSR FACE3
-    compute_face3(game_state);
+    draw_face3(game_state);
 
     // LDA CT.TUN
     // IFNE
     //  JSR FC.TUN
     // ENDIF
     if (game_state.has_tunnel) {
-        compute_tunnel(game_state);
+        draw_tunnel(game_state);
     }
 }
+
+//GM.AT
+fn update_attract_mode(game_state: *GameState) void {
+
+    // 	JSR MN.FRA
+    frame_handler(game_state);
+    // 	TRAI 0 ATRACT		; atract mode is on
+    game_state.is_in_attract_mode = true;
+
+    //TODO: handle credits
+    // 	LDA $$CRDT
+    // 	IFNE
+    // 	 JSR MN.SBD		;  start button decode
+    // 	ENDIF
+
+    // 	TRAI 048 AL.Y
+    // 	TRAI 0B1 AL.X
+    var word_position = V2{ 0xB1, 0x48 };
+
+    // 	LDA FRAME
+    // 	AND #03F
+    // 	IFEQ
+    if (game_state.frame & 0x3F == 0) {
+        // 	 LDA #11.*6
+        // 	 JSR SC.ERA
+        screen_erase(
+            word_position,
+            0x42,
+            game_state,
+        );
+
+        //TODO: handle different coin states
+        // I don't think we will have something called "free play?"
+        // 	 LDA $CMODE
+        // 	 AND #03
+        // 	 IFEQ
+        // 	  TRAI 2 $$CRDT
+        // 	  LDA #59		;  free play
+        // 	 ELSE
+        // 	 LDA $$CRDT
+        // 	 IFEQ
+        // 	  LDA #0A		;  insert coin
+        // 	 ELSE
+        // 	  LDA #10		;  press start
+        // 	 ENDIF
+        // 	 ENDIF
+        // 	 JSR WR.DRW
+        draw_word(
+            0xA,
+            &word_position,
+            0x7F,
+            game_state,
+        );
+        // 	ELSE
+        // 	CMP #20
+        // 	IFEQ
+    } else if (game_state.frame & 0x3F == 0x20) {
+        // 	 LDA #11.*6
+        // 	 JSR SC.ERA
+        screen_erase(
+            word_position,
+            0x42,
+            game_state,
+        );
+        // 	ENDIF
+        // 	ENDIF
+    }
+
+    // 	LDA FRAME
+    // 	AND #1F			;  update once per half sec
+    // 	IFEQ
+    if (game_state.frame & 0x1F == 0) {
+
+        // 	TRAI 0C5 AL.X		;  erase for credit display
+        // 	TRAI 058 AL.Y
+        word_position = V2{ 0xC5, 0x58 };
+        // 	LDA #6*6
+        // 	JSR SC.ERA
+        screen_erase(
+            word_position,
+            6 * 6,
+            game_state,
+        );
+
+        // 	LDA $CNCT
+        // 	IFEQ
+        // 	 TRAI 0D0 AL.X
+        // 	ENDIF
+        if (game_state.number_of_credits == 0) {
+            word_position[0] = 0xD0;
+        }
+
+        // 	LDA $$CRDT
+        // 	IFEQ
+        // 	 LDY $CNCT
+        // 	 BNE 10$
+        // 	ENDIF
+        //NOTE: we won't have a concept of 1/2 credits so if
+        // $$CRDT (credit count) is 0
+        // $CNCT (coin count) would also be 0.
+
+        // 	JSR DG.2OT
+        draw_2_digit_number(
+            game_state.number_of_credits,
+            game_state,
+        );
+
+        // 10$:
+
+        // 	LDA AL.X
+        // 	ADD #4
+        // 	STA AL.X
+        word_position[0] += 4;
+
+        // 	LDA $CNCT
+        // 	IFNE
+        // 	 LDA #17
+        // 	 JSR WR.DRW	;  1/2 credit display
+        // 	ENDIF
+        //NOTE: we won't have a concept of 1/2 credits
+        //      so, we do not implement the above
+
+        // 	ENDIF
+    }
+
+    // ;  flash LED's
+    // 	LDA HW.COK
+    // 	IFNE
+    // 	LDX $$CRDT
+    // 	IFNE
+
+    // 	LDY #0
+    // 	LDA FRAME
+    // 	AND #20
+    // 	IFNE
+    // 	 LDY #0FF
+    // 	ENDIF
+    // 	STY HW.LE1
+
+    // 	CPX #02
+    // 	IFCS
+    // 	STY HW.LE2
+    // 	ENDIF
+
+    // 	ENDIF
+    // 	ENDIF
+
+    // 	LDA $$CRDT
+    // 	ORA $CNCT	;  no half credits
+    // 	IFEQ
+    if (game_state.number_of_credits == 0) {
+
+        // 	DEC MN.DEL
+        // 	IFEQ
+        // 	DEC 1+MN.DEL
+        game_state.main_loop_delay -= 1;
+        // 	IFMI
+        if (game_state.main_loop_delay < 0) {
+            //NOTE this will be a 1 player game only. So ignore all 2 player references
+
+            // 	  TRAI 1 P1.LIV
+            game_state.lives = 1;
+            // 	  TRAI 0 PL.FLG		;  one player game
+            // 	  STA P2.LIV
+            // 	  STA PL.UP
+            // 	  STA WV.WAR		;  reset warp
+            game_state.wave_enable_warp = false;
+            // 	  JSR MN.SCI
+            initialize_and_draw_player_score(game_state);
+            // 	  JSR GM.ST0
+            initialize_game_start_state(game_state);
+            // ;	  JMP GM.ENL
+            // 	ENDIF
+        }
+        // 	ENDIF
+
+        // 	ENDIF
+    }
+
+    // 	JMP GM.ENL
+}
+
+//SC.ERA
+inline fn screen_erase(
+    start_position: V2,
+    number_of_pixel_columns_to_erase: isize,
+    game_state: *GameState,
+) void {
+    add_draw_command(.{
+        .shape = .ScreenErase,
+        .position = start_position,
+        .number_of_segments = number_of_pixel_columns_to_erase,
+
+        //unused
+        .color = undefined,
+    }, game_state);
+}
+
+//DG.2OT
+fn draw_2_digit_number(number: isize, game_state: *GameState) void {
+    if (number < 0) {
+        toolbox.panic(
+            "Uhhh don't know what to do with negative numbers: {}",
+            .{number},
+        );
+    }
+
+    _ = game_state;
+}
+
+//MN.SCI
+fn initialize_and_draw_player_score(game_state: *GameState) void {
+    _ = game_state;
+}
+
+//GM.ST0
+fn initialize_game_start_state(game_state: *GameState) void {
+    _ = game_state;
+}
+
+//MN.FRA
+fn frame_handler(game_state: *GameState) void {
+    //NOTE: this is for vsync which is not applicable
+    //     10$:	 LSR SYNC		;
+    // 	 BCC 10$		;  frame handler
+
+    // 	INC16 FRAME
+    game_state.frame +%= 1;
+    // 	INC16 WV.TIM
+    game_state.wave_time +%= 1;
+
+    // 	LDA HW.STS		;  self test switch
+    // 	AND #MA.STS
+    // 	IFEQ
+    // 	 JMP MN.SLT
+    // 	ENDIF
+
+    // ;  housekeeping, at least every 6x16 milliseconds.
+    // MN.HOU:
+    // 	STA HW.WDC		; prevent watchdog reset
+    // 	JSR EEACC1		;  coin stats
+
+}
+
 //CL.PR
 fn set_bitmap_values_of_faces(face: u8, game_state: *GameState) void {
     // EOR #80
@@ -1074,10 +1830,10 @@ fn color_value_to_color(color_value: u8) Color {
 
     //Only top 4 bits are used
     return switch ((color_value >> 4) & 0xF) {
-        0x9, 0x1 => .White,
+        0x9, 0x7, 0x1 => .White,
         0xA, 0x2 => .Gray,
         0xB, 0x3 => .DarkGray,
-        0xC, 0x4 => .Black,
+        0xC, 0x4, 0 => .Black,
         0xD => .Red,
         else => unreachable,
         // 0...0x9 => .White,
@@ -1290,7 +2046,7 @@ fn calculate_hidden_left_line(game_state: *GameState) void {
     }
 }
 //FACE1:
-fn compute_face1(game_state: *GameState) void {
+fn draw_face1(game_state: *GameState) void {
     // TRAM FC.HST LN.HCR
     // TRAM FC.V1S LN.VCR
     var line_position = V2{
@@ -1303,7 +2059,7 @@ fn compute_face1(game_state: *GameState) void {
     var current_line = game_state.face_v1n;
     while (true) {
         // JSR LN.F1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             color,
             FAST_LINE_1_NUM_SEGMENTS,
@@ -1327,7 +2083,7 @@ fn compute_face1(game_state: *GameState) void {
         const border_color_value = game_state.face_color_values[3];
         color = color_value_to_color(border_color_value);
         // 	JSR LN.F1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             color,
             FAST_LINE_1_NUM_SEGMENTS,
@@ -1338,7 +2094,7 @@ fn compute_face1(game_state: *GameState) void {
         // 	TRAM FC.VST LN.VCR	; lower edge
         line_position[1] = game_state.face_position[1];
         // 	JSR LN.F1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             color,
             FAST_LINE_1_NUM_SEGMENTS,
@@ -1358,7 +2114,7 @@ fn compute_face1(game_state: *GameState) void {
             game_state.face_position[0] + 4, game_state.face_v1s - 4,
         };
         // 	JSR LN.3
-        add_draw_command(
+        add_draw_line_command(
             .Line3,
             color,
             game_state.castle_block_v1n,
@@ -1388,7 +2144,7 @@ fn compute_face1(game_state: *GameState) void {
 
             const hidden_edge_color = color_value_to_color(game_state.face_hidden_edge_color_value);
             // 	  JSR LN.3
-            add_draw_command(
+            add_draw_line_command(
                 .Line3,
                 hidden_edge_color,
                 game_state.castle_block_hidden_right_edge_length,
@@ -1401,7 +2157,7 @@ fn compute_face1(game_state: *GameState) void {
     }
 }
 //FACE2:
-fn compute_face2(game_state: *GameState) void {
+fn draw_face2(game_state: *GameState) void {
     //  TRAM FC.HST LN.HCR
     // 	TRAM FC.V2S LN.VCR
     var line_position = V2{
@@ -1415,7 +2171,7 @@ fn compute_face2(game_state: *GameState) void {
 
     while (true) {
         // 10$:	JSR LN.F2
-        add_draw_command(
+        add_draw_line_command(
             .Line2,
             color,
             FAST_LINE_2_NUM_SEGMENTS,
@@ -1441,7 +2197,7 @@ fn compute_face2(game_state: *GameState) void {
         const border_color_value = game_state.face_color_values[3];
         color = color_value_to_color(border_color_value);
         // 	JSR LN.F2
-        add_draw_command(
+        add_draw_line_command(
             .Line2,
             color,
             FAST_LINE_2_NUM_SEGMENTS,
@@ -1452,7 +2208,7 @@ fn compute_face2(game_state: *GameState) void {
         // 	TRAM FC.V2S LN.VCR	; lower line
         line_position[1] = game_state.face_v2s;
         // 	JSR LN.F2
-        add_draw_command(
+        add_draw_line_command(
             .Line2,
             color,
             FAST_LINE_2_NUM_SEGMENTS,
@@ -1465,7 +2221,7 @@ fn compute_face2(game_state: *GameState) void {
         // 	TRAM FC.V2N LN.LG3	; right vertical line
         const number_of_segments = game_state.face_v2n;
         // 	JSR LN.3
-        add_draw_command(
+        add_draw_line_command(
             .Line3,
             color,
             number_of_segments,
@@ -1484,7 +2240,7 @@ fn compute_face2(game_state: *GameState) void {
             line_position[1] - 2,
         };
         // 	JSR LN.3
-        add_draw_command(
+        add_draw_line_command(
             .Line3,
             color,
             number_of_segments,
@@ -1510,7 +2266,7 @@ fn compute_face2(game_state: *GameState) void {
             color = color_value_to_color(game_state.face_color_values[1]);
             // 	  TRAM BL.HLL LN.LG3
             // 	  JSR LN.3
-            add_draw_command(
+            add_draw_line_command(
                 .Line3,
                 color,
                 game_state.castle_block_hidden_left_edge_length,
@@ -1525,7 +2281,7 @@ fn compute_face2(game_state: *GameState) void {
     }
 }
 //FACE3:
-fn compute_face3(game_state: *GameState) void {
+fn draw_face3(game_state: *GameState) void {
     //  TRAI CT.XSZ LN.LG1
     var number_of_line_1_segments: isize = 4;
     // 	TRAI CT.YSZ CURLIN
@@ -1539,7 +2295,7 @@ fn compute_face3(game_state: *GameState) void {
     // 10$:
     while (true) {
         // JSR LN.F1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             line_1_color,
             FAST_LINE_1_NUM_SEGMENTS,
@@ -1557,7 +2313,7 @@ fn compute_face3(game_state: *GameState) void {
         line_position[0] -= 1;
 
         // 	JSR LN.F1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             line_1_color,
             FAST_LINE_1_NUM_SEGMENTS,
@@ -1575,7 +2331,7 @@ fn compute_face3(game_state: *GameState) void {
         line_position[0] -= 1;
 
         // 	JSR LN.F1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             line_1_color,
             FAST_LINE_1_NUM_SEGMENTS,
@@ -1596,7 +2352,7 @@ fn compute_face3(game_state: *GameState) void {
         number_of_line_1_segments -= 1;
 
         // 	JSR LN.1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             line_1_color,
             number_of_line_1_segments,
@@ -1610,7 +2366,7 @@ fn compute_face3(game_state: *GameState) void {
         line_position[0] -= 1;
 
         // 	JSR LN.F1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             line_1_color,
             FAST_LINE_1_NUM_SEGMENTS,
@@ -1639,7 +2395,7 @@ fn compute_face3(game_state: *GameState) void {
         // 	IFMI
         if (game_state.castle_block_is_upper_left_edge_hidden) {
             // 	 JSR LN.F1
-            add_draw_command(
+            add_draw_line_command(
                 .Line1,
                 line_1_color,
                 FAST_LINE_1_NUM_SEGMENTS,
@@ -1655,7 +2411,7 @@ fn compute_face3(game_state: *GameState) void {
             // 	 DEC LN.LG1
             number_of_line_1_segments -= 1;
             // 	 JSR LN.1
-            add_draw_command(
+            add_draw_line_command(
                 .Line1,
                 line_1_color,
                 number_of_line_1_segments,
@@ -1674,7 +2430,7 @@ fn compute_face3(game_state: *GameState) void {
         // 	TRAM FC.VST LN.VCR
         line_position = game_state.face_position;
         // 	JSR LN.F1
-        add_draw_command(
+        add_draw_line_command(
             .Line1,
             line_1_color,
             FAST_LINE_1_NUM_SEGMENTS,
@@ -1684,7 +2440,7 @@ fn compute_face3(game_state: *GameState) void {
 
         // 				; lower left edge
         // 	JSR LN.F2
-        add_draw_command(
+        add_draw_line_command(
             .Line2,
             line_2_color,
             FAST_LINE_2_NUM_SEGMENTS,
@@ -1703,7 +2459,7 @@ fn compute_face3(game_state: *GameState) void {
         // 	IFMI
         if (game_state.castle_block_is_upper_right_edge_hidden) {
             // 	 JSR LN.F2
-            add_draw_command(
+            add_draw_line_command(
                 .Line2,
                 line_2_color,
                 FAST_LINE_2_NUM_SEGMENTS,
@@ -1725,10 +2481,8 @@ fn compute_face3(game_state: *GameState) void {
             // 	 TRAM LN.VCR YB
             const pixel_position = line_position - V2{ 8, 0 };
             // 	 TRAM FC.BVB VB
-            add_draw_command(
-                .Pixel,
+            add_draw_pixel_command(
                 line_2_color,
-                0,
                 pixel_position,
                 game_state,
             );
@@ -1737,19 +2491,56 @@ fn compute_face3(game_state: *GameState) void {
     }
     // 	RTS
 }
-fn compute_tunnel(game_state: *GameState) void {
+fn draw_tunnel(game_state: *GameState) void {
     _ = game_state;
     //TODO
     unreachable;
 }
 
-fn add_draw_command(
+inline fn add_draw_line_command(
     shape: DrawCommand.Shape,
     color: Color,
     number_of_segments: isize,
     position: V2,
     game_state: *GameState,
 ) void {
+    add_draw_command(.{
+        .shape = shape,
+        .color = color,
+        .number_of_segments = number_of_segments,
+        .position = position,
+    }, game_state);
+}
+inline fn add_draw_character_command(
+    character: u8,
+    color: Color,
+    position: V2,
+    game_state: *GameState,
+) void {
+    add_draw_command(.{
+        .shape = .Character,
+        .color = color,
+        .character = character,
+        .position = position,
+    }, game_state);
+}
+inline fn add_draw_pixel_command(
+    color: Color,
+    position: V2,
+    game_state: *GameState,
+) void {
+    add_draw_command(.{
+        .shape = .Pixel,
+        .color = color,
+        .position = position,
+    }, game_state);
+}
+
+fn add_draw_command(
+    command: DrawCommand,
+    game_state: *GameState,
+) void {
+    const position = command.position;
     toolbox.assert(
         !(position[0] < 0 or position[0] >= SCREEN_WIDTH or
             position[1] - Y_COORDINATE_OFFSET < 0 or
@@ -1757,22 +2548,16 @@ fn add_draw_command(
         "draw commmand out of bounds!",
         .{},
     );
-    if (shape == .Line1 and color == .DarkGray and
-        @reduce(
-        .And,
-        position == V2{ 0x5C, 0x82 },
-    ) and
-        number_of_segments == 3)
-    {
-        @breakpoint();
-    }
+    toolbox.assert(
+        command.shape != .Character or command.character >= '0',
+        "Bad character value: {}",
+        .{command.character},
+    );
+
+    var command_copy = command;
+    command_copy.position[1] -= 0x18;
     game_state.draw_command_queue.enqueue_expecting_room(
-        .{
-            .shape = shape,
-            .color = color,
-            .number_of_segments = number_of_segments,
-            .position = position - V2{ 0, 0x18 },
-        },
+        command_copy,
     );
 }
 

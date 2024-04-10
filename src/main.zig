@@ -196,6 +196,17 @@ pub fn update_castle_bitmap(
                     command.color,
                     castle_bitmap_data,
                 ),
+                .Character => draw_character(
+                    command.character,
+                    command.position,
+                    command.color,
+                    castle_bitmap_data,
+                ),
+                .ScreenErase => screen_erase(
+                    command.position,
+                    command.number_of_segments,
+                    castle_bitmap_data,
+                ),
                 .Pixel => {
                     draw_pixel(
                         command.position,
@@ -307,6 +318,150 @@ fn draw_line3(
         draw_pixel(cursor, is_white_pixel, castle_bitmap_data);
         cursor -= .{ 0, 1 };
     }
+}
+fn draw_character(
+    char: isize,
+    position: cc.V2,
+    color: cc.Color,
+    castle_bitmap_data: pdapi.BitmapData,
+) void {
+    //	TRAI 000 HW.AY	; y auto dec
+    // 	TRAI 0FF HW.YIN
+
+    // 	TRAM AL.X XB
+    // 	LDY AL.DIG
+    // 	CPY #4A
+    // 	IFMI
+    // 	 TR16AI AL.55D AL.PTR
+    // 	 TYA
+    // 	 SUB #40
+    // 	ELSE
+    // 	 TR16AI AL.55L AL.PTR
+    // 	 TYA
+    // 	 SUB #4A
+    // 	ENDIF
+    const bitmap_index_start: usize = switch (char) {
+        //TODO
+        '0'...'9' => unreachable,
+        else => @intCast((char - 'A') * cc.LETTER_BITMAP_WIDTH),
+    };
+    // 	JSR AL.5OT
+
+    // AL.5OT:
+    {
+        var position_cursor = position;
+        // 	STA TEMP1	;  mult by 5 so (A) points to sym
+        // 	ASLS 2
+        // 	ADD TEMP1
+        // 	STA TEMP1
+
+        // 	TRAI 5 AL.TMP
+        // 	LDX AL.COL
+        // 10$:
+        var i: usize = 0;
+        for (0..cc.LETTER_BITMAP_WIDTH) |x| {
+            // 	LDY TEMP1
+            // 	TRAM AL.Y YB
+            position_cursor[1] = position[1];
+            const bitmap_index = bitmap_index_start + x;
+            // 	LDA @AL.PTR(Y)
+            var character_row = cc.LETTER_BITMAPS[bitmap_index];
+            // 	LDY #0F
+            // 	.REPT 5
+            for (0..cc.LETTER_BITMAP_HEIGHT) |_| {
+                // 	ASL
+                // 	IFCS
+                if (character_row & 0x80 != 0) {
+                    // 	STX VB
+                    const is_white_pixel = switch (color) {
+                        .White => true,
+                        .Black => false,
+                        .Gray => gray_modulo(i),
+                        .DarkGray => dark_gray_modulo(i),
+                        .Red => red_modulo(i),
+                    };
+                    draw_pixel(
+                        position_cursor,
+                        is_white_pixel,
+                        castle_bitmap_data,
+                    );
+                    i += 1;
+                    // 	ENDIF
+                }
+                //NOTE: this code just causes auto increment
+                // 	IFCC
+                // 	LDY VB
+                //  	ENDIF
+
+                // ;	DEC YB
+                position_cursor -= .{ 0, 1 };
+                // 	.ENDM
+
+                character_row <<= 1;
+            }
+
+            // 	INC XB
+            position_cursor += .{ 1, 0 };
+            // 	INC TEMP1
+            // 	DEC AL.TMP
+            // 	BNE 10$
+        }
+    }
+    // 8$:
+    // 	TRAI 0FF HW.AY	; auto dec off
+}
+
+fn screen_erase(
+    start_position: cc.V2,
+    number_of_pixel_columns_to_erase: isize,
+    castle_bitmap_data: pdapi.BitmapData,
+) void {
+    //  STA TEMP1
+    var column_cursor = number_of_pixel_columns_to_erase;
+    // 	LDA AL.X
+    // 	STA XB
+    // 	LDA AL.Y
+    // 	STA YB
+    // 	INC YB
+    var position = start_position + cc.V2{ 0, 1 };
+
+    // 	TRAI 000 HW.AY	; auto dec y
+    // 	TRAI 0FF HW.YIN
+
+    // 	LDA #00F
+    // 	INC TEMP1
+    // 10$:
+    // 	DEC TEMP1
+    // 	BEQ 20$
+    while (column_cursor > 0) {
+        // 	STA VB
+        // 	.REPT 7
+        for (0..8) |_| {
+            // ;	DEC YB
+            // 	STA VB
+            // 	.ENDM
+
+            //NOTE: screen erase is always black
+            draw_pixel(
+                position,
+                false,
+                castle_bitmap_data,
+            );
+
+            position[1] -= 1;
+        }
+        // 	INC XB
+        position[0] += 1;
+        // 	LDY AL.Y
+        // 	STY YB
+        // 	INC YB
+        position[1] = start_position[1] + 1;
+
+        column_cursor -= 1;
+        // 	JMP 10$
+    }
+    // 20$:
+    // 	TRAI 0FF HW.AY
 }
 
 inline fn draw_pixel(
