@@ -133,6 +133,9 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
         const y = pdapi.LCD_ROWS - pdapi.get_font_height() - 1;
         _ = pdapi.draw_text(build_number_str.bytes, x, y);
     }
+    {
+        //TODO draw profiler and other stats
+    }
     //draw fps
     {
         pdapi.draw_fps(pdapi.LCD_COLUMNS - 20, 0);
@@ -340,11 +343,21 @@ fn draw_character(
     // 	 TYA
     // 	 SUB #4A
     // 	ENDIF
-    const bitmap_index_start: usize = switch (char) {
-        //TODO
-        '0'...'9' => unreachable,
-        else => @intCast((char - 'A') * cc.LETTER_BITMAP_WIDTH),
-    };
+
+    var bitmap_index_start: usize = 0;
+    var bitmap_set: []const u8 = undefined;
+    switch (char) {
+        '0'...'9' => {
+            bitmap_index_start = @intCast((char - '0') * cc.CHARACTER_BITMAP_WIDTH);
+            bitmap_set = &cc.NUMBER_BITMAPS;
+        },
+        'A'...'A' + cc.LETTER_BITMAPS.len => {
+            bitmap_index_start = @intCast((char - 'A') * cc.CHARACTER_BITMAP_WIDTH);
+            bitmap_set = &cc.LETTER_BITMAPS;
+        },
+        else => toolbox.panic("Trying to draw nvalid character: {X}", .{char}),
+    }
+
     // 	JSR AL.5OT
 
     // AL.5OT:
@@ -359,16 +372,16 @@ fn draw_character(
         // 	LDX AL.COL
         // 10$:
         var i: usize = 0;
-        for (0..cc.LETTER_BITMAP_WIDTH) |x| {
+        for (0..cc.CHARACTER_BITMAP_WIDTH) |x| {
             // 	LDY TEMP1
             // 	TRAM AL.Y YB
             position_cursor[1] = position[1];
             const bitmap_index = bitmap_index_start + x;
             // 	LDA @AL.PTR(Y)
-            var character_row = cc.LETTER_BITMAPS[bitmap_index];
+            var character_row = bitmap_set[bitmap_index];
             // 	LDY #0F
             // 	.REPT 5
-            for (0..cc.LETTER_BITMAP_HEIGHT) |_| {
+            for (0..cc.CHARACTER_BITMAP_HEIGHT) |_| {
                 // 	ASL
                 // 	IFCS
                 if (character_row & 0x80 != 0) {

@@ -14,8 +14,72 @@ const level_data = @embedFile("levels.bin");
 //We need to take this into account here.
 pub const Y_COORDINATE_OFFSET = 0x18;
 
-pub const LETTER_BITMAP_HEIGHT = 5;
-pub const LETTER_BITMAP_WIDTH = 5;
+pub const CHARACTER_BITMAP_HEIGHT = 5;
+pub const CHARACTER_BITMAP_WIDTH = 5;
+
+// AL.55D:		;  5x5 digits
+pub const NUMBER_BITMAPS = [_]u8{
+    0b11111000,
+    0b11111000,
+    0b10001000,
+    0b11111000,
+    0b11111000,
+
+    0b10000000,
+    0b10001000,
+    0b11111000,
+    0b10000000,
+    0b10000000,
+
+    0b10011000,
+    0b11001000,
+    0b11101000,
+    0b10111000,
+    0b10011000,
+
+    0b10001000,
+    0b10101000,
+    0b10101000,
+    0b11111000,
+    0b11111000,
+
+    0b00111000,
+    0b00111000,
+    0b00100000,
+    0b11111000,
+    0b00100000,
+
+    0b10111000,
+    0b10101000,
+    0b10101000,
+    0b11101000,
+    0b11100000,
+
+    0b11111000,
+    0b10101000,
+    0b10101000,
+    0b11101000,
+    0b11100000,
+
+    0b00011000,
+    0b00001000,
+    0b00001000,
+    0b11111000,
+    0b11111000,
+
+    0b11111000,
+    0b10101000,
+    0b10101000,
+    0b11111000,
+    0b11111000,
+
+    0b00111000,
+    0b00101000,
+    0b00101000,
+    0b11111000,
+    0b11111000,
+};
+
 pub const LETTER_BITMAPS = [_]u8{
     0b11111000,
     0b11111000,
@@ -608,7 +672,10 @@ pub fn update(dt: toolbox.Duration, game_state: *GameState) void {
             //  LDA #10	        ; wait 40 seconds before
             // ELSE			; deactivating warp
             //  LDA #1
-            game_state.main_loop_delay = 0x100;
+
+            //NOTE it is actually 0x200, because the first decrement
+            //     doesn't affect the high byte
+            game_state.main_loop_delay = 0x200;
             // ENDIF
             // STA 1+MN.DEL
 
@@ -1280,7 +1347,7 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
 
     // TRAI 4 TEMP3
     // BEGIN
-    for (0..LETTER_BITMAP_HEIGHT) |_| {
+    for (0..CHARACTER_BITMAP_HEIGHT) |_| {
 
         // LDX TEMP1
         // LDA AL.55L(X)
@@ -1289,7 +1356,7 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
 
         // LDX #4
         // BEGIN
-        for (0..LETTER_BITMAP_WIDTH) |_| {
+        for (0..CHARACTER_BITMAP_WIDTH) |_| {
             // ASL TEMP5
             // IFCS
             if (character_row & 0x80 != 0) {
@@ -1567,7 +1634,9 @@ fn draw_block(game_state: *GameState) void {
 fn update_attract_mode(game_state: *GameState) void {
 
     // 	JSR MN.FRA
-    frame_handler(game_state);
+    if (!frame_handler(game_state)) {
+        return;
+    }
     // 	TRAI 0 ATRACT		; atract mode is on
     game_state.is_in_attract_mode = true;
 
@@ -1656,18 +1725,21 @@ fn update_attract_mode(game_state: *GameState) void {
 
         // 	LDA $$CRDT
         // 	IFEQ
-        // 	 LDY $CNCT
-        // 	 BNE 10$
-        // 	ENDIF
-        //NOTE: we won't have a concept of 1/2 credits so if
-        // $$CRDT (credit count) is 0
-        // $CNCT (coin count) would also be 0.
+        if (game_state.number_of_credits == 0) {
+            // 	 LDY $CNCT
+            // 	 BNE 10$
+            // 	ENDIF
+            //NOTE: we won't have a concept of 1/2 credits so if
+            // $$CRDT (credit count) is 0
+            // $CNCT (coin count) would also be 0.
 
-        // 	JSR DG.2OT
-        draw_2_digit_number(
-            game_state.number_of_credits,
-            game_state,
-        );
+            // 	JSR DG.2OT
+            draw_2_digit_number_suppress_leading_zero(
+                game_state.number_of_credits,
+                word_position,
+                game_state,
+            );
+        }
 
         // 10$:
 
@@ -1761,7 +1833,28 @@ inline fn screen_erase(
 }
 
 //DG.2OT
-fn draw_2_digit_number(number: isize, game_state: *GameState) void {
+inline fn draw_2_digit_number_suppress_leading_zero(
+    number: isize,
+    position: V2,
+    game_state: *GameState,
+) void {
+    //  JSR AL.CNV
+    // 	LDX #0
+    // 	STX SC.FNZ	; 1= found first non-zero digit
+    draw_2_digit_number(
+        number,
+        position,
+        true,
+        game_state,
+    );
+}
+// DG.2HT
+fn draw_2_digit_number(
+    number: isize,
+    start_position: V2,
+    suppress_leading_zero: bool,
+    game_state: *GameState,
+) void {
     if (number < 0) {
         toolbox.panic(
             "Uhhh don't know what to do with negative numbers: {}",
@@ -1769,7 +1862,98 @@ fn draw_2_digit_number(number: isize, game_state: *GameState) void {
         );
     }
 
-    _ = game_state;
+    // 	PHA
+    // 	LSRS 4
+    // 	STA SC.DIG
+
+    // 	TRAI 2*6 SC.LEF	; pixels left to erase
+    var pixels_left_to_erase: isize = 2 * 6; //6 pixels per digit
+    var position = start_position;
+    // ;  first digit
+    // 	JSR AL.DGO
+    draw_digit(
+        @intCast(@divTrunc(number, 10)),
+        &position,
+        suppress_leading_zero,
+        &pixels_left_to_erase,
+        game_state,
+    );
+
+    // ;  second digit
+    // 	INC SC.FNZ	;  output digit even if score=0
+    // 	PLA
+    // 	AND #0F
+    // 	STA SC.DIG
+    // 	JSR AL.DGO
+    draw_digit(
+        @intCast(@divTrunc(number, 10)),
+        &position,
+        false,
+        &pixels_left_to_erase,
+        game_state,
+    );
+
+    // 	LDA SC.LEF
+    // 	JSR SC.ERA
+    screen_erase(
+        position,
+        pixels_left_to_erase,
+        game_state,
+    );
+}
+// AL.DGO:
+fn draw_digit(
+    digit: u8,
+    position: *V2,
+    suppress_zero: bool,
+    pixels_left_to_erase: *isize,
+    game_state: *GameState,
+) void {
+    // 	LDA SC.FNZ	;  zero suppress
+    // 	IFEQ
+    // 	LDA SC.DIG
+    // 	IFEQ
+    // 	JMP 50$
+    if (suppress_zero and digit == 0) {
+        return;
+    }
+    // 	ELSE
+
+    // NOTE: this will be handled by the callee
+    // 	INC SC.FNZ
+    // suppress_zero.* = true;
+
+    // 	ENDIF
+    // 	ENDIF
+
+    // 	LDA #6
+    // 	JSR SC.ERA
+    screen_erase(
+        position.*,
+        6,
+        game_state,
+    );
+
+    // 	LDA SC.DIG
+    // 	ADD #40
+    // 	STA AL.DIG
+
+    // 	CL.ALP=07F
+    const color = color_value_to_color(0x7F);
+    // 	TRAI CL.ALP AL.COL
+    // 	JSR AL.DRW
+    add_draw_character_command(
+        (digit % 10) + '0',
+        color,
+        position.*,
+        game_state,
+    );
+
+    // 	ADAI 6 AL.X
+    position.*[0] += 6;
+    // 	SBAI 6 SC.LEF
+    pixels_left_to_erase.* -= 6;
+    // 50$:
 }
 
 //MN.SCI
@@ -1783,11 +1967,16 @@ fn initialize_game_start_state(game_state: *GameState) void {
 }
 
 //MN.FRA
-fn frame_handler(game_state: *GameState) void {
-    //NOTE: this is for vsync which is not applicable
+//This returns false if there pending draw commands that should be flushed
+//Before we continue drawing more things.
+fn frame_handler(game_state: *GameState) bool {
     //     10$:	 LSR SYNC		;
     // 	 BCC 10$		;  frame handler
 
+    //NOTE: this is how we sync the frame
+    if (!game_state.draw_command_queue.is_empty()) {
+        return false;
+    }
     // 	INC16 FRAME
     game_state.frame +%= 1;
     // 	INC16 WV.TIM
@@ -1803,7 +1992,7 @@ fn frame_handler(game_state: *GameState) void {
     // MN.HOU:
     // 	STA HW.WDC		; prevent watchdog reset
     // 	JSR EEACC1		;  coin stats
-
+    return true;
 }
 
 //CL.PR
@@ -2555,7 +2744,7 @@ fn add_draw_command(
     );
 
     var command_copy = command;
-    command_copy.position[1] -= 0x18;
+    command_copy.position[1] -= Y_COORDINATE_OFFSET;
     game_state.draw_command_queue.enqueue_expecting_room(
         command_copy,
     );
