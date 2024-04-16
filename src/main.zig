@@ -3,8 +3,10 @@ const toolbox = @import("toolbox");
 const build_info = @import("build_info");
 const pdapi = @import("playdate_api.zig");
 const cc = @import("crystal_castles.zig");
+const profiler = toolbox.profiler;
 
 pub const THIS_PLATFORM = toolbox.Platform.Playdate;
+pub const ENABLE_PROFILER = !toolbox.IS_DEBUG;
 pub const panic = toolbox.panic_handler;
 
 const PlatformState = struct {
@@ -70,6 +72,7 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
 
 var go: bool = false;
 fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
+    profiler.start_profiler();
     const platform_state: *PlatformState = @ptrCast(@alignCast(userdata.?));
     const game_state = platform_state.game_state;
     defer {
@@ -86,8 +89,24 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     //     go = true;
     // }
     // if (go) {
-    cc.update(dt, game_state);
-    update_castle_bitmap(dt, platform_state);
+    {
+        profiler.begin("cc.update");
+        cc.update(dt, game_state);
+        profiler.end();
+    }
+    const command_count: usize = if (game_state.draw_command_queue.rcursor <=
+        game_state.draw_command_queue.wcursor)
+        game_state.draw_command_queue.wcursor -
+            game_state.draw_command_queue.rcursor
+    else
+        (game_state.draw_command_queue.data.len -
+            game_state.draw_command_queue.rcursor) +
+            game_state.draw_command_queue.wcursor + 1;
+    {
+        profiler.begin("update_castle_bitmap");
+        update_castle_bitmap(dt, platform_state);
+        profiler.end();
+    }
     // }
 
     // if (pdapi.is_button_pressed(pdapi.BUTTON_A)) {
@@ -99,6 +118,9 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
 
     //draw game
     {
+        profiler.begin("draw game");
+        defer profiler.end();
+
         const game_offset_x =
             (pdapi.LCD_COLUMNS - cc.SCREEN_WIDTH) / 2;
         const game_offset_y =
@@ -133,8 +155,60 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
         const y = pdapi.LCD_ROWS - pdapi.get_font_height() - 1;
         _ = pdapi.draw_text(build_number_str.bytes, x, y);
     }
-    {
+    if ((comptime ENABLE_PROFILER) and pdapi.is_button_down(pdapi.BUTTON_B)) {
+        profiler.end_profiler();
+        var background_width: pdapi.Pixel = 0;
+
         //TODO draw profiler and other stats
+        var lines = toolbox.DynamicArray(toolbox.String8).init(
+            platform_state.frame_arena,
+            32,
+        );
+        {
+            const str = toolbox.str8fmt(
+                "# draw commands: {}",
+                .{command_count},
+                platform_state.frame_arena,
+            );
+            lines.append(str);
+            background_width = pdapi.get_text_width(str.bytes);
+        }
+        lines.append(toolbox.str8lit(""));
+
+        const stats = toolbox.profiler.compute_statistics_of_current_state(
+            platform_state.frame_arena,
+        );
+        {
+            const str = toolbox.str8fmt(
+                "Frame Time: {}mcs",
+                .{stats.total_elapsed.microseconds()},
+                platform_state.frame_arena,
+            );
+            background_width = @max(background_width, pdapi.get_text_width(str.bytes));
+            lines.append(str);
+        }
+        for (stats.section_statistics.items()) |stat| {
+            const str = stat.str8(platform_state.frame_arena);
+            background_width = @max(background_width, pdapi.get_text_width(str.bytes));
+            lines.append(str);
+        }
+
+        const background_height = pdapi.get_font_height() * @as(
+            pdapi.Pixel,
+            @intCast(lines.len()),
+        );
+        pdapi.fill_rect(
+            0,
+            0,
+            background_width,
+            background_height,
+            pdapi.solid_color_to_color(pdapi.LCDSolidColor.ColorWhite),
+        );
+        var y: pdapi.Pixel = 0;
+        for (lines.items()) |line| {
+            _ = pdapi.draw_text(line.bytes, 0, y);
+            y += pdapi.get_font_height();
+        }
     }
     //draw fps
     {

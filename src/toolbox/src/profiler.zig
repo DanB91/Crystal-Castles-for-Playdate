@@ -56,6 +56,11 @@ pub fn begin(comptime label: []const u8) void {
     const StaticVars = struct {
         //index 0 is always unused, since it is the "root parent"
         var section_index: usize = 0;
+        comptime {
+            const hack_to_get_unique_address_that_will_probably_break_in_the_future =
+                label;
+            _ = hack_to_get_unique_address_that_will_probably_break_in_the_future;
+        }
     };
 
     //this will give us a different index per label since we have a different

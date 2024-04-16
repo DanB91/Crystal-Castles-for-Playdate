@@ -12,9 +12,8 @@ pub fn str8fmt(comptime fmt: []const u8, args: anytype, arena: *toolbox.Arena) S
         toolbox.panic("Error std.fmt.bufPrint in str8fmt: {}", .{e});
     return str8(string_bytes);
 }
-pub fn str8fmtbuf(comptime fmt: []const u8, args: anytype, comptime buffer_len: usize) String8 {
-    var buffer: [buffer_len]u8 = undefined;
-    const string_bytes = std.fmt.bufPrint(&buffer, fmt, args) catch |e|
+pub fn str8fmtbuf(buffer: []u8, comptime fmt: []const u8, args: anytype) String8 {
+    const string_bytes = std.fmt.bufPrint(buffer, fmt, args) catch |e|
         toolbox.panic("Error std.fmt.bufPrint in str8fmt: {}", .{e});
     return str8(string_bytes);
 }
