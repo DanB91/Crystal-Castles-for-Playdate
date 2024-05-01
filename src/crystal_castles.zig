@@ -7,6 +7,7 @@ pub const FAST_LINE_1_NUM_SEGMENTS = 4;
 pub const FAST_LINE_2_NUM_SEGMENTS = 8;
 
 const level_data = @embedFile("levels.bin");
+const z = std.mem.zeroes;
 
 //The game was designed around the fact that VBlank happend between
 //scanlines 0-0x17 (inclusive), where nothing could be drawn to the screen.
@@ -17,7 +18,7 @@ pub const Y_COORDINATE_OFFSET = 0x18;
 pub const CHARACTER_BITMAP_HEIGHT = 5;
 pub const CHARACTER_BITMAP_WIDTH = 5;
 
-// AL.55D:		;  5x5 digits
+//@AL.55D:		;  5x5 digits
 pub const NUMBER_BITMAPS = [_]u8{
     0b11111000,
     0b11111000,
@@ -237,14 +238,14 @@ pub const LETTER_BITMAPS = [_]u8{
     0b10111000,
     0b10011000,
 
-    // 64 space
+    //@64 space
     0b00000000,
     0b00000000,
     0b00000000,
     0b00000000,
     0b00000000,
 
-    // 65 life symbol
+    //@65 life symbol
 
     0b01101000,
     0b11010000,
@@ -252,7 +253,7 @@ pub const LETTER_BITMAPS = [_]u8{
     0b11010000,
     0b01101000,
 
-    // 66, slash used in 1/2
+    //@66, slash used in 1/2
 
     0b10000000,
     0b01000000,
@@ -260,21 +261,21 @@ pub const LETTER_BITMAPS = [_]u8{
     0b00010000,
     0b00001000,
 
-    // 67, questionmark
+    //@67, questionmark
     0b00001000,
     0b00001000,
     0b10101000,
     0b00111000,
     0b00010000,
 
-    // 68  colon
+    //@68  colon
     0b00000000,
     0b00000000,
     0b10010000,
     0b00000000,
     0b00000000,
 
-    // 69
+    //@69
     0b00100000,
     0b00100000,
     0b10101000,
@@ -453,14 +454,135 @@ const WORDS = [_][]const u8{
     "[",
 };
 
+//@ ; creature distribution, depends on wave number
+//@ ; creature table
+//@ DF.CRT:
+const CREATURE_TABLE = [_]isize{
+    9, 9, 9, 9, 9, 1, 1, 1, //@ ; 00
+    1, 1, 0xA, 1, 1, 1, 1, 1, //@ ; 10
+    7, 0, 0, 0, 0, 0, 0, 0, //@ ; 20
+    7, 6, 0xA, 1, 1, 1, 1, 1, //@ ; 30
+    7, 0, 0xA, 1, 1, 1, 1, 1, //@ ; 01
+    7, 9, 0xA, 1, 1, 1, 0xE, 0xB, //@ ; 11
+    7, 0, 0xA, 1, 1, 1, 1, 0, //@ ; 21
+    7, 6, 0xA, 9, 9, 1, 1, 0, //@ ; 31
+    7, 0, 0xA, 1, 1, 1, 0, 9, //@ ; 02
+    1, 0xC, 0xA, 1, 1, 1, 0, 9, //@ ; 12
+    7, 1, 0xA, 1, 1, 1, 1, 0, //@ ; 22
+    7, 6, 0xA, 1, 1, 1, 0xA, 9, //@ ; 32
+    7, 1, 0xA, 1, 1, 1, 1, 0, //@ ; 03
+    7, 1, 0xA, 1, 1, 1, 1, 0, //@ ; 13
+    7, 1, 0xC, 0, 9, 9, 9, 0xB, //@ ; 23
+    7, 6, 0xA, 0xE, 0xE, 1, 1, 0, //@ ; 33
+};
+//@ ;  creature numbers
+//@ DF.CRN:
+const CREATURE_NUMBERS = [_]isize{
+    3, 8, 5, 5, 5, 5, 5, 5,
+    5, 5, 5, 5, 6, 6, 6, 6,
+};
+//@ ;   initial speeds for gem-eaters
+//@ DF.SP1:
+const GEM_EATER_INTIAL_SPEEDS = [_]isize{
+    2,   2,   3, 4, 5, 7, 8, 9,
+    0xA, 0x1,
+};
+
+//@ ;  max speed for gem-eaters
+//@ DF.MSG:
+const GEM_EATER_MAX_SPEEDS = [_]isize{
+    3,   5,   7, 9, 0xA, 0xB, 0xC, 0xD,
+    0xA, 0x2,
+};
+
+//@ ;  crystal monster speed
+//@ DF.CMS:
+const CRYSTAL_MONSTER_SPEEDS = [_]isize{
+    1,   4,   5, 6, 7, 8, 9, 0xA,
+    0xA, 0x8,
+};
+
+//@ ;   eating times
+//@ DF.ETD:
+const EATING_TIMES = [_]isize{
+    0x40, 0x20, 0x10, 0x10, 0x10, 0x10, 8, 8,
+    8,    0x10,
+};
+
+const CREATURE_INITIAL_POSITIONS = [_]V2{
+    .{ 0x2, 0xC },   .{ 0x3, 0x14 },  .{ 0x4, 0x14 },
+    .{ 0x5, 0x14 },  .{ 0x6, 0x14 },  .{ 0x7, 0x14 },
+    .{ 0x8, 0x14 },  .{ 0x9, 0x14 },  .{ 0xA, 0x14 },
+    .{ 0xF, 0x13 },  .{ 0x10, 0x10 }, .{ 0x14, 0x3 },
+    .{ 0x14, 0x4 },  .{ 0x8, 0x14 },  .{ 0x9, 0x14 },
+    .{ 0xA, 0x14 },  .{ 0xB, 0x14 },  .{ 0xC, 0x14 },
+    .{ 0x1, 0x2 },   .{ 0x1, 0x1 },   .{ 0x1, 0x4 },
+    .{ 0x1, 0x8 },   .{ 0x1, 0xC },   .{ 0x1, 0x10 },
+    .{ 0x1, 0xA },   .{ 0x1, 0x6 },   .{ 0x14, 0x14 },
+    .{ 0xC, 0x2 },   .{ 0xD, 0x2 },   .{ 0x2, 0x14 },
+    .{ 0x7, 0x14 },  .{ 0x14, 0x14 }, .{ 0x13, 0x14 },
+    .{ 0x12, 0x14 }, .{ 0x11, 0x14 }, .{ 0x10, 0x14 },
+    .{ 0x1, 0x1 },   .{ 0x1, 0x1 },   .{ 0x1, 0x14 },
+    .{ 0x2, 0x14 },  .{ 0x3, 0x14 },  .{ 0x4, 0x14 },
+    .{ 0x5, 0x14 },  .{ 0x6, 0x14 },  .{ 0x7, 0x14 },
+    .{ 0xC, 0x1 },   .{ 0xC, 0x1 },   .{ 0x14, 0x2 },
+    .{ 0xD, 0x2 },   .{ 0x8, 0xC },   .{ 0x1, 0x14 },
+    .{ 0x2, 0x14 },  .{ 0x2, 0x2 },   .{ 0xC, 0x6 },
+    .{ 0xB, 0xB },   .{ 0xB, 0xB },   .{ 0xE, 0x14 },
+    .{ 0xF, 0x14 },  .{ 0x10, 0x14 }, .{ 0x11, 0x14 },
+    .{ 0x12, 0x14 }, .{ 0x13, 0x14 }, .{ 0x14, 0x14 },
+    .{ 0xA, 0xC },   .{ 0xA, 0xC },   .{ 0x1, 0x10 },
+    .{ 0x12, 0x14 }, .{ 0x11, 0x14 }, .{ 0x10, 0x14 },
+    .{ 0xF, 0x14 },  .{ 0xE, 0x14 },  .{ 0xD, 0x14 },
+    .{ 0x2, 0x9 },   .{ 0x2, 0x9 },   .{ 0x2, 0x14 },
+    .{ 0x3, 0x14 },  .{ 0x4, 0x14 },  .{ 0x5, 0x14 },
+    .{ 0x6, 0x14 },  .{ 0x7, 0x14 },  .{ 0x1, 0x14 },
+    .{ 0xD, 0xD },   .{ 0x8, 0x14 },  .{ 0xD, 0xE },
+    .{ 0x1, 0x14 },  .{ 0x4, 0x14 },  .{ 0x5, 0x14 },
+    .{ 0x6, 0x14 },  .{ 0x7, 0x14 },  .{ 0x1, 0x14 },
+    .{ 0x2, 0x2 },   .{ 0x2, 0x2 },   .{ 0x2, 0x14 },
+    .{ 0x1, 0x1 },   .{ 0x4, 0x14 },  .{ 0x5, 0x14 },
+    .{ 0x6, 0x14 },  .{ 0x7, 0x14 },  .{ 0x8, 0x14 },
+    .{ 0x2, 0xC },   .{ 0x2, 0xD },   .{ 0x3, 0x2 },
+    .{ 0x2, 0x2 },   .{ 0x5, 0x14 },  .{ 0x4, 0x14 },
+    .{ 0x3, 0x14 },  .{ 0x2, 0x14 },  .{ 0x1, 0x14 },
+    .{ 0x8, 0x14 },  .{ 0x8, 0x14 },  .{ 0x2, 0x14 },
+    .{ 0x3, 0x14 },  .{ 0x4, 0x14 },  .{ 0x5, 0x14 },
+    .{ 0x6, 0x14 },  .{ 0x7, 0x14 },  .{ 0x1, 0x14 },
+    .{ 0x13, 0x6 },  .{ 0x13, 0x6 },  .{ 0x2, 0x14 },
+    .{ 0x3, 0x14 },  .{ 0x4, 0x14 },  .{ 0x5, 0x14 },
+    .{ 0x6, 0x14 },  .{ 0x7, 0x14 },  .{ 0x1, 0x14 },
+    .{ 0x1, 0x2 },   .{ 0x2, 0x2 },   .{ 0x14, 0x2 },
+    .{ 0x6, 0x6 },   .{ 0x4, 0x2 },   .{ 0x5, 0x14 },
+    .{ 0x6, 0x14 },  .{ 0x14, 0x14 }, .{ 0xB, 0xB },
+    .{ 0x8, 0x1 },   .{ 0x8, 0x1 },   .{ 0x2, 0x2 },
+    .{ 0x14, 0x14 }, .{ 0x4, 0x4 },   .{ 0x5, 0x5 },
+    .{ 0x6, 0x6 },   .{ 0x7, 0x7 },   .{ 0x1, 0x9 },
+};
+//@;   tree growing times
+//@ DF.TRG:
+const TREE_GROWING_TIMES = [_]isize{
+    0x40, 0x20, 0x20, 0x10, 0x8, 0x8, 0x8, 0x8,
+    0x10, 0x20,
+};
+
 //A "wave" is a sub-division of a "level".
 //There are 4 waves per level except level 10 which only has 1 wave
 //You can kind of think of a "wave" as Super Mario Bros level and
 //a "level" as a  Super Mario Bros world.
 const WAVE_DATA_SIZE = 0x400;
 
+const MAX_NUMBER_OF_ENTITIES = 10; //EN.MAX
+const MOTION_OBJECTS_PER_ENTITY = 4;
+const PLAYER_ENTITY = 0;
+const SWARM_ENTITY = 1;
+
+const PLAYFIELD_WIDTH = 22;
+const PLAYFIELD_HEIGHT = 22;
+
 pub const Dimension = isize;
 pub const V2 = @Vector(2, Dimension);
+pub const ZV2 = V2{ 0, 0 };
 pub const Color = enum(u8) {
     White,
     Red,
@@ -470,7 +592,7 @@ pub const Color = enum(u8) {
 };
 const DrawCommand = struct {
     shape: Shape,
-    number_of_segments: isize = 0, // used for lines and screen erase
+    number_of_segments: isize = 0, //@used for lines and screen erase
     character: u8 = 0, //only used for characters
     position: V2,
     color: Color,
@@ -485,17 +607,21 @@ const DrawCommand = struct {
         Pixel,
     };
 };
+
 pub const GameState = struct {
     draw_command_queue: toolbox.RingQueue(DrawCommand),
     global_arena: *toolbox.Arena,
     rng_state: toolbox.RandomState,
 
     current_state: enum {
+        //NOTE: GM.AT0 is spread across DrawBackground, DrawCastle, DrawCastleRow, and DrawCreditsInserted
         DrawBackground,
         DrawCastle,
         DrawCastleRow,
         DrawCreditsInserted,
         AttractModeMainLoop,
+        StartGame,
+        StartOfWave,
     } = .DrawBackground,
 
     is_in_attract_mode: bool = false, //ATRACT
@@ -565,26 +691,79 @@ pub const GameState = struct {
     face_color_values: [7]u8 = undefined, //FC.BV
     face3_color_value_hidden_or_not: u8 = 0, //CT.BV3
 
+    entity_is_warping: bool = false, //EN.WRF	;  warp flag
+    entity_in_tunnel: EntityField(bool) = z(EntityField(bool)), //EN.TFL
+    entity_is_dead: EntityField(bool) = z(EntityField(bool)), //EN.DEA
+    entity_blanking_flag: EntityField(bool) = z(EntityField(bool)), //EN.BLK
+    //TODO: figure out the different life mode states
+    entity_life_mode: EntityField(isize) = z(EntityField(isize)), //EN.LMD
+    //EN.XO1-EN.XO4, EN.YO1-EN.YO4
+    entity_motion_object_positions: EntityField([MOTION_OBJECTS_PER_ENTITY]V2) =
+        z(EntityField([MOTION_OBJECTS_PER_ENTITY]V2)),
+    entity_state: EntityField(isize) = z(EntityField(isize)), //EN.STA
+    entity_position: EntityField(V2) = z(EntityField(V2)), //EN.MX and EN.MY
+    entity_height: EntityField(isize) = z(EntityField(isize)), //EN.HEI
+    entity_playfield_offset: EntityField(usize) = z(EntityField(usize)), //EN.MAT
+    //TODO figure out why we need to playfield offset fields
+    entity_playfield_offset2: EntityField(usize) = z(EntityField(usize)), //EN.MA2
+    entity_animation: EntityField(isize) = z(EntityField(isize)), //EN.ANV
+    //@ ;  direction 0<=EN.DR<=3
+    entity_direction: EntityField(isize) = z(EntityField(isize)), //EN.DR
+    //TODO: don't know what HOF means.  maybe "horizontal_offset?"
+    entity_hof: EntityField(isize) = z(EntityField(isize)), //EN.HOF
+    entity_delay: EntityField(isize) = z(EntityField(isize)), //EN.DEL
+    entity_slow_speed: EntityField(isize) = z(EntityField(isize)), //EN.DEL
+    entity_fast_speed: EntityField(isize) = z(EntityField(isize)), //EN.DEL
+
+    entity_collition_delay: isize = 0, //EN.CDL
+    entity_jump_delay: isize = 0, //EN.JDL
+    entity_jump_flag: bool = false, //EN.JFL
+    gem_eater_max_speed: isize = 0, //EN.MSG
+    crystal_monster_speed: isize = 0, //EN.CMS
+
+    general_start_delay: isize = 0, //EN.GDL
+
+    tune_table_keys: [4]isize =
+        .{ 0, 0, 0, 0 }, //RS.KEY
+
+    //SC.GEM	;  gem counter
+    gem_counter: isize = 0,
+
     main_loop_delay: isize = 0, //MN.DEL
 
     has_tunnel: bool = false, //CT.TUN
 
     lives: isize = 0, //P1.LIV
+    score: isize = 0, //P1.SCO
+
+    motion_objects_current: isize = 0,
+    motion_objects_previous: isize = 0,
+    motion_objects_selected_buffer: usize = 0,
+
+    motion_objects_buffers: [2][256]u8 = [_][256]u8{ [_]u8{0} ** 256, [_]u8{0} ** 256 },
 
     frame: isize = 0, //FRAME
     number_of_credits: isize = 0, //$$CRDT or $CNCT
     current_wave_data: [WAVE_DATA_SIZE]u8 = undefined, //CTRAM,
 
+    last_trackball_position: V2 = ZV2, //TR.I and TR.J
+
+    show_easter_egg: bool = false,
+
     scoreboard: Scoreboard = .{},
+
+    fn EntityField(comptime T: type) type {
+        return [MAX_NUMBER_OF_ENTITIES]T;
+    }
 };
 const Scoreboard = struct {
-    //         HFSIZ=250.
-    // SC.HS1:	.BLKB HFSIZ	;  high scores
-    // SC.HS2: .BLKB HFSIZ
-    // SC.HS3:	.BLKB HFSIZ
-    // SC.HI1:	.BLKB HFSIZ	;  and initials
-    // SC.HI2: .BLKB HFSIZ
-    // SC.HI3: .BLKB HFSIZ
+    //@        HFSIZ=250.
+    //@SC.HS1:	.BLKB HFSIZ	;  high scores
+    //@SC.HS2: .BLKB HFSIZ
+    //@SC.HS3:	.BLKB HFSIZ
+    //@SC.HI1:	.BLKB HFSIZ	;  and initials
+    //@SC.HI2: .BLKB HFSIZ
+    //@SC.HI3: .BLKB HFSIZ
     entries: [250]Entry = [_]Entry{.{}} ** 250,
 
     const Entry = struct {
@@ -652,39 +831,592 @@ pub fn update(dt: toolbox.Duration, game_state: *GameState) void {
             advance_castle_row(game_state);
         },
         .DrawCreditsInserted => {
-            // JSR AL.BER
-            erase_board();
-            // LDA #10
-            // JSR MS.DRW		;  credits
+            //@JSR AL.BER
+            erase_board(game_state);
+            //@LDA #10
+            //@JSR MS.DRW		;  credits
             draw_message(0x10, game_state);
 
             //TODO:
-            // LDA WV.WAR
-            // IFNE
-            //  LDA #1A
-            //  JSR MS.DRW		;  warp message
-            //  TRAI 0C3 AL.X
-            //  TRAI 3B AL.Y
-            //  TRAM SC.HS1+HFSIZ-1 SC.NM
-            //  TRAM SC.HS2+HFSIZ-1 SC.NM+1
-            //  TRAM SC.HS3+HFSIZ-1 SC.NM+2
-            //  JSR SC.NDS		;  display high score
-            //  LDA #10	        ; wait 40 seconds before
-            // ELSE			; deactivating warp
-            //  LDA #1
+            //@LDA WV.WAR
+            //@IFNE
+            //@ LDA #1A
+            //@ JSR MS.DRW		;  warp message
+            //@ TRAI 0C3 AL.X
+            //@ TRAI 3B AL.Y
+            //@ TRAM SC.HS1+HFSIZ-1 SC.NM
+            //@ TRAM SC.HS2+HFSIZ-1 SC.NM+1
+            //@ TRAM SC.HS3+HFSIZ-1 SC.NM+2
+            //@ JSR SC.NDS		;  display high score
+            //@ LDA #10	        ; wait 40 seconds before
+            //@ELSE			; deactivating warp
+            //@ LDA #1
 
             //NOTE it is actually 0x200, because the first decrement
-            //     doesn't affect the high byte
+            //@    doesn't affect the high byte
             game_state.main_loop_delay = 0x200;
-            // ENDIF
-            // STA 1+MN.DEL
+            //@ENDIF
+            //@STA 1+MN.DEL
 
             game_state.current_state = .AttractModeMainLoop;
         },
         .AttractModeMainLoop => {
             update_attract_mode(game_state);
         },
+        //GM.ST
+        .StartGame => {
+            //TODO: code seems to be in  CJTB.MAC
+            //@SEI
+            //@JSR MN.SNI
+            //@CLI
+
+            //@JSR WV.INI		; init waves
+            initialize_wave_data(game_state);
+
+            //TODO:
+            //@LDA #0
+            //@JSR MN.SN1	;  start game music
+
+            //@JSR GM.SW0
+            start_of_wave(game_state);
+            //@JMP GM.ENL
+        },
+        //@ GM.SW:
+        .StartOfWave => {
+            //@ 	JSR MN.FRA
+            if (!frame_handler(game_state)) {
+                return;
+            }
+
+            //************TODO**************
+            //@ 	JSR CT.GDR		; draw a row of gems
+
+            //@ 	JMP GM.ENL
+        },
     }
+}
+//;  ----- state 2: start of wave
+//GM.SW0
+fn start_of_wave(game_state: *GameState) void {
+    //@ TRAI 2 GM.STA
+    game_state.current_state = .StartOfWave;
+
+    //@	JSR MS.MWV		; draw message, if any
+
+    //@;  on block 0,0 don't draw city, for player 1
+    //@	LDA PL.UP
+    //@	ORA WV.XCO
+    //@	ORA WV.YCO
+    //@	BEQ 10$
+    if (game_state.wave_xco != 0 or game_state.wave_yco != 0) {
+        //TODO
+        //@	JSR CT.INI		; init city+elevators
+        //@	JSR CT.DRW		; draw city
+    }
+
+    //@10$:
+
+    //@	JSR EN.INI		; init entities
+    init_entities(game_state);
+
+    //*******TODO******
+    //@	JSR EN.INP		; and positions
+    init_all_entity_positions(game_state);
+    //@	JSR MN.INM		; zero motion objects
+    //@	JSR WV.BSP		; move bear to starting pos
+    //@	JSR EN.INI		; reinit entities
+    //@	JSR CT.GIN		; init for gem drawing
+}
+//@;------------------------
+//@;  init for start of wave
+//@EN.INI:
+fn init_entities(game_state: *GameState) void {
+    //NOTE: en.num seems like its just used as a loop counter
+    //@	TRAI 2*EN.MAX EN.NUM
+
+    //NOTE: thinking this can just be a flag passed into the subroutines that need it
+    //@	LDX #0
+    //@	STX EN.EWM	;  end of wave mode init
+
+    //@	STX EN.WRF	;  warp flag
+    game_state.entity_is_warping = false;
+    //@	STX EN.TFL
+    game_state.entity_in_tunnel[0] = false;
+    //@	STX SC.GEM	;  gem counter
+
+    //@	BEGIN
+    for (0..MAX_NUMBER_OF_ENTITIES) |entity| {
+        //@	 JSR EN.IN3
+        //@;------------------------------
+        //@;  init state, at start of wave
+        //@EN.IN3:
+        //@;  state, picture offsets,  life or death
+
+        //@	TRAI 0 EN.DEA(X)	;  everybody is alive
+        game_state.entity_is_dead[entity] = false;
+        //@	STA AT.OUT
+        game_state.show_easter_egg = false;
+
+        //@	TXA
+        //@	IFEQ
+        if (entity == PLAYER_ENTITY) {
+            //@	 STA EN.STA
+            game_state.entity_state[entity] = 0;
+            //@	 TRAI 0F-3  EN.YO1
+            //@	 STA	    EN.YO2
+            //@	 TRAI 0FF-3 EN.YO3
+            //@	 STA	    EN.YO4
+
+            //@	 TRAI 0FC   EN.XO1
+            //@	 STA	    EN.XO3
+            //@	 TRAI 4	    EN.XO2
+            //@	 STA	    EN.XO4
+            const STARTING_PLAYER_MOTION_OBJECT_POSITIONS =
+                [_]V2{
+                .{ 0xFC, 0xF - 3 },
+                .{ 0xFC, 0xF - 3 },
+                .{ 4, 0xFF - 3 },
+                .{ 4, 0xFF - 3 },
+            };
+            @memcpy(
+                &game_state.entity_motion_object_positions[entity],
+                &STARTING_PLAYER_MOTION_OBJECT_POSITIONS,
+            );
+        }
+        //@	ELSE
+        else {
+
+            //@	 TRAI 0F    EN.YO1(X)
+            //@	 STA	    EN.YO2(X)
+            //@	 TRAI 0FF   EN.YO3(X)
+            //@	 STA	    EN.YO4(X)
+
+            //@	 TRAI 0FF EN.XO1(X)
+            //@	 STA	 EN.XO3(X)
+            //@	 TRAI 7   EN.XO2(X)
+            //@	 STA	 EN.XO4(X)
+            const STARTING_PLAYER_MOTION_OBJECT_POSITIONS =
+                [_]V2{
+                .{ 0xFF, 0xF },
+                .{ 0xFF, 0xF },
+                .{ 7, 0xFF },
+                .{ 7, 0xFF },
+            };
+            @memcpy(
+                &game_state.entity_motion_object_positions[entity],
+                &STARTING_PLAYER_MOTION_OBJECT_POSITIONS,
+            );
+
+            //@	 CPX #2	; slot for swarm
+            //@	 IFEQ
+            if (entity == SWARM_ENTITY) {
+                //@	  TRAI 8 EN.STA(X)
+                //TODO figure out what a state of 8 means
+                game_state.entity_state[entity] = 8;
+            }
+            //@	 ELSE
+            else {
+                //@	  TXA
+                //@	  LSR
+                //@	  SUB #2
+                //@	  STA TEMP1      ; table entry
+
+                //@	  LDA WV.NUM
+                //@;  now have distribution number (0-0F)
+                //@	  ASLS 3
+                //@	  ADD TEMP1
+                //@	  TAY
+                const entity_signed: isize = @intCast(entity);
+                //NOTE: the multiplication by 2 is due to the fact that the original
+                //@     code assumes that entity is incremented by 2, but we increment by 1
+                //@     in this code base
+                const creature_table_index = (((entity_signed * 2) >> 1) - 2) + (game_state.wave_current << 3);
+                //@	  LDA DF.CRT(Y)
+                //@	  STA EN.STA(X)
+                game_state.entity_state[entity] = CREATURE_TABLE[@intCast(creature_table_index)];
+
+                //@	 ENDIF
+            }
+            //@	ENDIF
+        }
+        //@	PLEND
+    }
+}
+
+//@;----------------------------------
+//@;  init positions on wave (re)start
+//@EN.INP:
+fn init_all_entity_positions(game_state: *GameState) void {
+
+    //@	LDA HW.TBH	;  init trackball
+    //@	STA TR.I
+
+    //@	LDA HW.TBV
+    //@	STA TR.J
+    //TODO: may want to call out to platform layer
+    //      to get initial trackball positions?
+    //      For now, assume 0
+    game_state.last_trackball_position = ZV2;
+
+    //@	TRAI 040 EN.GDL
+    game_state.general_start_delay = 0x40;
+    //@	TRAI 2*EN.MAX EN.NUM
+    //@	LDX #0
+    //@	STX EN.CDL	;  init collision delay
+    game_state.entity_collition_delay = 0;
+
+    for (0..MAX_NUMBER_OF_ENTITIES) |entity| {
+        //@	BEGIN
+        //@	 JSR EN.IN2
+        init_entity(entity, game_state);
+
+        //@	INXS 2
+        //@	CPX EN.NUM
+        //@	PLEND
+    }
+}
+
+//@;---------------------------------------
+//@; routine to initialize EN,  on gp start
+//@EN.IN2:
+fn init_entity(entity: usize, game_state: *GameState) void {
+    //@;  life mode
+    //@	TXA
+    //@	STA TEMP1	;  for comparison later
+    switch (entity) {
+
+        //@	IFEQ
+        PLAYER_ENTITY => {
+            //@	 STA EN.LMD	;  player is alive
+            game_state.entity_life_mode[entity] = 0;
+        },
+        //@	ELSE
+        //@	CPX #2
+        //@	IFEQ
+        SWARM_ENTITY => {
+            //@	 TRAI 3 EN.LMD(X);  swarm comes in later
+            game_state.entity_life_mode[entity] = 3;
+        },
+        //@	ELSE
+        else => {
+            //@	LDY WV.NUM
+            //@	LDA DF.CRN(Y)
+            //@	ADD WV.DF2		;  increase number
+            const creature_number = CREATURE_NUMBERS[@intCast(game_state.wave_current)] +
+                game_state.wave_long_term_difficulty;
+
+            //@	CMP #8			;  of creatures
+            //@	IFCS			;  max of 8
+            //@	 LDA #8
+            //@	ENDIF
+
+            //@	ASL
+            //@	ADD #2
+            //@	CMP TEMP1
+            //NOTE: adding 1 instead of 2, and not left shifting
+            //      because entities are not
+            //      16-bit addresses like in the original code base
+            const creature_entity: usize = @intCast(@min(creature_number, 8) + 1);
+            //@	IFPL
+            if (creature_entity >= entity) {
+                //@	 LDA EN.DEA(X)
+                //@	 IFEQ		;  if not completely dead
+                if (!game_state.entity_is_dead[entity]) {
+
+                    //@	  TRAI 2 EN.LMD(X)	;  start descent
+                    game_state.entity_life_mode[entity] = 2;
+                    //@	  LDA EN.STA(X)
+                    //@	  SUB #7
+                    if (game_state.entity_state[entity] - 7 == 0) {
+                        //@	  IFEQ
+                        //@	   STA EN.LMD(X)
+                        game_state.entity_life_mode[entity] = 0;
+                        //@	  ENDIF
+                    }
+                    //@	 ENDIF
+                }
+                //@	ELSE
+                else {
+                    //@	 TRAI 3 EN.LMD(X)
+                    game_state.entity_life_mode[entity] = 3;
+                    //@	ENDIF
+                }
+                //@	ENDIF
+            }
+            //@	ENDIF
+        },
+    }
+
+    init_entity_position(entity, game_state);
+}
+
+//@EN.INR:			;  entry for init positions
+fn init_entity_position(entity: usize, game_state: *GameState) void {
+    //@	JSR EN.PSI	;  position init
+    //@;--------------------------------------------
+    //@;  initialize positions etc., after death etc.
+    //@EN.PSI:
+    {
+        //@	TXA
+        //@	IFEQ		;  player
+        if (entity == PLAYER_ENTITY) {
+            //@	  STA  EN.JDL	; not jumping
+            game_state.entity_jump_delay = 0;
+            //@	  STA  EN.JFL	; anymore
+            game_state.entity_jump_flag = false;
+            //@	  STA  EN.BLK
+            game_state.entity_blanking_flag[entity] = false;
+            //@	  TRAI 14 EN.MX
+            //@	  TRAI 11 EN.MY
+            game_state.entity_position[entity] = .{ 14, 11 };
+        }
+        //@	ELSE
+        else {
+            //@;  init positions of creatures
+            //@	  LDA WV.NUM	; 0-15
+            //@	  ASLS 3
+            //@	  ADD WV.NUM
+            //@	  STA TEMP1
+            //@	  TXA
+            //@	  LSR
+            //@	  SUB #1
+            //@	  ADD TEMP1
+            const creature_initial_position_index =
+                @as(usize, @intCast((game_state.wave_current << 3) + game_state.wave_current)) +
+                (entity - 1);
+            //@	  TAY
+            //@	  TRAM DF.INX(Y) EN.MX(X)
+            //@	  TRAM DF.INY(Y) EN.MY(X)
+            game_state.entity_position[entity] =
+                CREATURE_INITIAL_POSITIONS[creature_initial_position_index];
+
+            //@;  swarm on top of player after too much time
+            //@	  LDA EN.STA(X)
+            //@	  CMP #8
+            //@	  IFEQ
+            if (game_state.entity_state[entity] == 8) {
+                //@	   LDA WV.TIM+1
+                //@	   STA RS.KEY+1		; key of swarm sound
+                game_state.tune_table_keys[1] = (game_state.wave_time >> 8) & 0xFF;
+
+                //@	   LDA WV.DF2
+                //@	   LSR
+                //@	   JSR NEGATE
+                //@	   ADD #0B		;  44 seconds
+                //@	   CMP 1+WV.TIM
+                //@	   IFCC
+                if (game_state.wave_time >=
+                    0xB00 - (game_state.wave_long_term_difficulty * 0x100))
+                {
+                    //@	   LDA EN.TFL
+                    //@	   IFEQ
+                    if (!game_state.entity_in_tunnel[PLAYER_ENTITY]) {
+
+                        //@	    LDA WV.TIM+1
+                        //@	    ADC #3
+                        //@	    STA RS.KEY+1
+                        game_state.tune_table_keys[1] = (@divTrunc(game_state.wave_time, 0x100)) + 3;
+                        //@	    TRAM EN.MX EN.MX(X)
+                        //@	    LDA EN.MY
+                        game_state.entity_position[entity] = game_state.entity_position[entity];
+                    }
+                    //@	   ELSE
+                    else {
+                        //@	    LDA #014
+                        //@	    STA EN.MX(X)
+                        game_state.entity_position[entity] = .{ 0x14, 0x14 };
+                        //@	   ENDIF
+                    }
+                    //@	   STA EN.MY(X)
+
+                    //@	   ENDIF
+                    //@	  ENDIF
+                }
+            }
+
+            //@	  LDA EN.STA(X)
+            //@	  CMP #7
+            //@	  IFEQ
+            //@	   LDA #0
+            //@	  ELSE
+            //@	   LDA #0FF
+            //@	  ENDIF
+            //@	  STA EN.BLK(X)
+            game_state.entity_blanking_flag[entity] = game_state.entity_state[entity] != 7;
+
+            //@	  TRAI 0 EN.ANV(X)	;  animation variable init
+            game_state.entity_animation[entity] = 0;
+
+            //NOTE ignore GP fields for now. Probably can be just replaced by locals
+            //@	  STA EN.GP1(X)		;  general purpose init
+            //@	  STA EN.GP2(X)
+
+            //@	  STA EN.DR(X)	; direction
+            game_state.entity_direction[entity] = 0;
+            //@	  STA EN.HOF(X)
+            game_state.entity_hof[entity] = 0;
+
+            //@	  LDA EN.STA(X)
+            //@	  IFEQ
+            if (game_state.entity_state[entity] == 0) {
+                //@	   STA 1+EN.DEL(X)
+                //@	   LDY WV.DF2
+                //@	   TRAM DF.TRG(Y) EN.DEL(X)	; tree growing time
+                game_state.entity_delay[entity] =
+                    TREE_GROWING_TIMES[@intCast(game_state.wave_long_term_difficulty)];
+            }
+            //@	  ELSE
+            else {
+                //@	  CMP #8		;  swarm
+                //@	  IFEQ
+                //@	   TR16AI 140 EN.DEL(X)
+                //@	  ELSE
+                //@	   TR16AI 20 EN.DEL(X)
+                //@	  ENDIF
+                //@	  ENDIF
+                game_state.entity_delay[entity] =
+                    if (game_state.entity_state[entity] == 8)
+                    0x140
+                else
+                    0x20;
+            }
+
+            //@	  LDY WV.DF2
+            //@	  LDA DF.SP1(Y)
+            //@	  ADD WV.DFO
+            //@	  STA EN.SP1(X)
+            game_state.entity_slow_speed[entity] =
+                GEM_EATER_INTIAL_SPEEDS[@intCast(game_state.wave_long_term_difficulty)] +
+                game_state.wave_difficulty_offset;
+            //@	  LDA DF.MSG(Y)
+            //@	  ADD WV.DFO
+            //@	  STA EN.MSG		;  max speed g-eat
+            game_state.gem_eater_max_speed =
+                GEM_EATER_MAX_SPEEDS[@intCast(game_state.wave_long_term_difficulty)] +
+                game_state.wave_difficulty_offset;
+
+            //@	  TRAM DF.CMS(Y) EN.CMS		;  crys mons speed
+            game_state.crystal_monster_speed =
+                CRYSTAL_MONSTER_SPEEDS[@intCast(game_state.wave_long_term_difficulty)];
+
+            //@	ENDIF
+        }
+    }
+    //@10$:
+    while (true) {
+        //NOTE: CTRAM is just current_wave_data
+        //@	TR16AI CTRAM EN.MAT(X)
+
+        //@	JSR EN.MUL
+        const entity_position =
+            game_state.entity_position[entity];
+        //NOTE: the playfield is column-major
+
+        //NOTE this is EN.OFF
+        const playfield_offset: usize =
+            @intCast(
+            entity_position[0] * PLAYFIELD_HEIGHT +
+                entity_position[1],
+        );
+        //@	AD16AM EN.MAT(X) EN.OFF
+        game_state.entity_playfield_offset[entity] = playfield_offset;
+
+        //@	TR16AM EN.MAT(X) EN.MA2(X)
+        //@	AD16AI EN.MA2(X) 16*16
+        game_state.entity_playfield_offset2[entity] =
+            PLAYFIELD_WIDTH * PLAYFIELD_HEIGHT;
+
+        //@	TR16AM EN.MAT(X) EZ.MAT
+        //@	TR16AM EN.MA2(X) EZ.MA2
+        //@	LDY #0
+        //@	TRAM @EZ.MAT(Y) EN.HEI(X)
+        game_state.entity_height[entity] =
+            game_state.current_wave_data[
+            game_state.entity_playfield_offset[entity]
+        ];
+
+        //@;  height at 1 1 must not be 0 !!!!!!!! otherwise
+        //@;  an infinite loop happens here
+
+        //@	LDA EN.HEI(X)
+        //@	IFEQ
+        if (game_state.entity_height[entity] == 0) {
+            //@	 TRAI 1 EN.MX(X)
+            //@	 STA    EN.MY(X)
+            game_state.entity_position[entity] =
+                .{ 1, 1 };
+            //@	 BNE 10$		;  BRA
+            //@	ENDIF
+        } else {
+            break;
+        }
+    }
+
+    // **** TODO ****
+
+    //@; horizontal position
+    //@	LDA EN.MX(X)
+    //@	SUB #1
+    //@	ASLS 2
+    //@	STA EN.T1
+    //@	LDA EN.MY(X)
+    //@	SUB #1
+    //@	ASLS 3
+    //@	STA EN.T2
+    //@	LDA #CT.HST-9	; picture offset
+    //@	ADD EN.T2
+    //@	SUB EN.T1
+    //@	STA EN.HP(X)
+
+    //@; vertical position
+    //@	LDA EN.MY(X)
+    //@	SUB #1
+    //@	ASL
+    //@	STA EN.T2
+    //@	LDA #0-CT.VST-0B+06+0A	; picture offset
+    //@	SUB EN.T2
+    //@	SUB EN.T1
+    //@	STA EN.VP(X)
+
+    //@;  screen vert coordinate (used for scrolling down)
+    //@	ADD EN.HEI(X)
+    //@	STA EN.Y(X)
+    //@	LDA EN.HP(X)
+    //@	STA EN.X(X)
+
+    //@; pictures
+    //@	TRAI 2  EN.AND(X)
+
+    //@	LDA #11
+    //@	JSR EN.PCF	;  bear
+
+    //@; priority
+    //@	LDY #0
+    //@	LDA @EZ.MA2(Y)
+    //@	AND #40
+    //@	IFNE
+    //@	 TRAI 0 EN.PR1(X)
+    //@	ELSE
+    //@	 TRAI 0FF EN.PR1(X)
+    //@	ENDIF
+
+    //@; fine x,y
+    //@	TRAI 10 EN.IX(X)
+    //@	TRAI 0C EN.IY(X)
+
+    //@;  set collision bit, if not dead
+    //@	LDA EN.LMD(X)
+    //@	CMP #3
+    //@	IFNE
+
+    //@	CPX #0
+    //@	IFNE
+    //@	 LDA @EZ.MA2(Y)
+    //@	 ORA #08
+    //@	 STA @EZ.MA2(Y)
+    //@	ENDIF
+
+    //@	ENDIF
 }
 
 //MN.SNI
@@ -693,15 +1425,33 @@ fn initialize_sounds() void {
 }
 
 //AL.BER
-fn erase_board() void {
-    //TODO
+fn erase_board(game_state: *GameState) void {
+    //@TRAI 8 TEMP2
+    //@TRAI 0B0 AL.X
+    //@TRAI 02E AL.Y
+    //@BEGIN
+    //@ LDA #0B*6+3
+    //@ JSR SC.ERA
+    //@ ADAI 08 AL.Y
+    //@ DEC TEMP2
+    //@EQEND
+
+    var position = V2{ 0xB0, 0x2E };
+    for (0..8) |_| {
+        screen_erase(
+            position,
+            0xB * 6 + 3,
+            game_state,
+        );
+        position[1] += 0x8;
+    }
 }
 
 //This MS.TAB is a list of pointers, but that seems kind of unncessary.
 //This will contain all of the data that those pointers pointed to, flattened out
 const MESSAGE_DATA = [_][]const u8{
-    //  maze titles
-    //  get the gems bentley bear
+    //@ maze titles
+    //@ get the gems bentley bear
     //MC.M00:
     &.{
         0xB1, 0x28,
@@ -712,7 +1462,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x1F,
     },
 
-    //  extra life
+    //@ extra life
     //MC.M01:
     &.{
         0xB1,
@@ -723,7 +1473,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x2E,
     },
 
-    //  tree wave
+    //@ tree wave
     //MC.M02:
     &.{
         0x0B1,
@@ -732,7 +1482,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x31,
     },
 
-    //  berthildas castle
+    //@ berthildas castle
     //MC.M03:
     &.{
         0xB1,
@@ -742,7 +1492,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x34,
     },
 
-    //  pyramid
+    //@ pyramid
     //MC.M04:
     &.{
         0xB1,
@@ -750,7 +1500,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x3A,
     },
 
-    //  hidden spiral
+    //@ hidden spiral
     //MC.M05:
     &.{
         0x0B1,
@@ -760,7 +1510,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x63,
     },
 
-    //  hidden ramp
+    //@ hidden ramp
     //MC.M06:
     &.{
         0xB1,
@@ -769,7 +1519,7 @@ const MESSAGE_DATA = [_][]const u8{
         0xA8,
     },
 
-    //  berthildas fortress
+    //@ berthildas fortress
     //MC.M07:
     &.{
         0x0B1,
@@ -779,7 +1529,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x3F,
     },
 
-    //  impossible staircase
+    //@ impossible staircase
     //MC.M08:
     &.{
         0x0B1,
@@ -789,7 +1539,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x42,
     },
 
-    //  maze 1
+    //@ maze 1
     //MC.M09:
     &.{
         0xB1,
@@ -797,7 +1547,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x44,
     },
 
-    //  cross maze
+    //@ cross maze
     //MC.M0A:
     &.{
         0xB1,
@@ -806,7 +1556,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x47,
     },
 
-    //  berthildas dungeon
+    //@ berthildas dungeon
     //MC.M0B:
     &.{
         0xB1,
@@ -816,7 +1566,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x48,
     },
 
-    //  crossroads
+    //@ crossroads
     //MC.M0C:
     &.{
         0xB1,
@@ -824,7 +1574,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x4A,
     },
 
-    //  nasty tree
+    //@ nasty tree
     //MC.M0D:
     &.{
         0xB1,
@@ -833,7 +1583,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x30,
     },
 
-    //   the end
+    //@  the end
     //MC.M0E:
     &.{
         0xB1,
@@ -842,7 +1592,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x0A0,
     },
 
-    //  berthildas palace
+    //@ berthildas palace
     //MC.M0F:
     &.{
         0xB1,
@@ -852,7 +1602,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x4E,
     },
 
-    //  credits
+    //@ credits
     //MC.M10:
     &.{
         0xC0,
@@ -860,7 +1610,7 @@ const MESSAGE_DATA = [_][]const u8{
         0x12,
     },
 
-    //  get ready
+    //@ get ready
     //MC.M11:
     &.{
         0x60, 0x80, 0xE, 0xF,
@@ -869,40 +1619,40 @@ const MESSAGE_DATA = [_][]const u8{
 
 //MS.DRW
 fn draw_message(message_number: usize, game_state: *GameState) void {
-    // ASL
-    // TAX
+    //@ASL
+    //@TAX
 
-    // .IF NE,CG.ST
-    // TR16AM MS.TAB(X) MS.PTR
-    // INXS 2
-    // TR16AM MS.TAB(X) MS.LEN
+    //@.IF NE,CG.ST
+    //@TR16AM MS.TAB(X) MS.PTR
+    //@INXS 2
+    //@TR16AM MS.TAB(X) MS.LEN
 
-    // .ENDC
+    //@.ENDC
 
-    // SB16AM MS.LEN MS.PTR
+    //@SB16AM MS.LEN MS.PTR
     const msg = MESSAGE_DATA[message_number];
 
-    // TRAI 07F AL.COL
+    //@TRAI 07F AL.COL
     const letter_color_value = 0x7F;
-    // LDY #1
-    // TRAM @MS.PTR(Y) AL.Y
-    // DEY
-    // TRAM @MS.PTR(Y) AL.X
+    //@LDY #1
+    //@TRAM @MS.PTR(Y) AL.Y
+    //@DEY
+    //@TRAM @MS.PTR(Y) AL.X
     var position = V2{ msg[0], msg[1] };
-    // STA AL.LMG		;  left margin
+    //@STA AL.LMG		;  left margin
     const left_margin = position[0];
 
-    // SBAI 2 MS.LEN
+    //@SBAI 2 MS.LEN
 
-    // BEGIN			;  loop through words
+    //@BEGIN			;  loop through words
     for (2..msg.len) |i| {
-        //  LDY #2
-        //  LDA @MS.PTR(Y)		;  word number
+        //@ LDY #2
+        //@ LDA @MS.PTR(Y)		;  word number
         var word_number: isize = msg[i];
-        //  CMP #0A			;  if not CR-directive
-        //  IFCS
+        //@ CMP #0A			;  if not CR-directive
+        //@ IFCS
         if (word_number >= 0xA) {
-            //   JSR WR.DRW
+            //@  JSR WR.DRW
             draw_word(
                 word_number,
                 &position,
@@ -910,30 +1660,30 @@ fn draw_message(message_number: usize, game_state: *GameState) void {
                 game_state,
             );
         }
-        //  ELSE
+        //@ ELSE
         else {
-            //   CMP #6
-            //   IFPL		;  6,7,8 map to 8,12.,16.
+            //@  CMP #6
+            //@  IFPL		;  6,7,8 map to 8,12.,16.
             if (word_number >= 6) {
-                //    ASLS 2
-                //    SUB #10
+                //@   ASLS 2
+                //@   SUB #10
                 word_number = word_number * 4 - 0x10;
-                //   ENDIF
+                //@  ENDIF
             }
-            //   ASL
-            //   STA TEMP1
-            //   ASL
-            //   ADD TEMP1
-            //   ADD AL.LMG	; 0B1+6*CRdirective
+            //@  ASL
+            //@  STA TEMP1
+            //@  ASL
+            //@  ADD TEMP1
+            //@  ADD AL.LMG	; 0B1+6*CRdirective
             word_number = (word_number * 4) + (word_number * 2) + left_margin;
-            //   STA AL.X	; hor position
-            //   ADAI 08 AL.Y  ; vert position
+            //@  STA AL.X	; hor position
+            //@  ADAI 08 AL.Y  ; vert position
             position = .{ word_number, position[1] + 8 };
-            //  ENDIF
+            //@ ENDIF
         }
-        // INC16 MS.PTR
-        // DEC MS.LEN
-        // EQEND
+        //@INC16 MS.PTR
+        //@DEC MS.LEN
+        //@EQEND
     }
 }
 
@@ -944,33 +1694,33 @@ fn draw_word(
     color_value: u8,
     game_state: *GameState,
 ) void {
-    // SUB #0A
+    //@SUB #0A
     const word_index: usize = @intCast(word_number - 0xA);
-    // ASL				;  up to 246 words
-    // STA TEMP1
-    // IFCC
-    //  TRAI 0 1+TEMP1
-    // ELSE
-    //  TRAI 1 1+TEMP1
-    // ENDIF			;  TEMP1,1+TEMP1  cointain table offset
-    // TR16AI WR.TAB WR.TPT
-    // AD16AM WR.TPT TEMP1	; points to table entry of word
-    // LDY #0
-    // TRAM @WR.TPT(Y) WR.PTR
-    // INY
-    // TRAM @WR.TPT(Y) WR.PTR+1
-    // INY
-    // TRAM @WR.TPT(Y) WR.LEN	;  next word
-    // INY
-    // TRAM @WR.TPT(Y) WR.LEN+1
-    // SB16AM WR.LEN WR.PTR
+    //@ASL				;  up to 246 words
+    //@STA TEMP1
+    //@IFCC
+    //@ TRAI 0 1+TEMP1
+    //@ELSE
+    //@ TRAI 1 1+TEMP1
+    //@ENDIF			;  TEMP1,1+TEMP1  cointain table offset
+    //@TR16AI WR.TAB WR.TPT
+    //@AD16AM WR.TPT TEMP1	; points to table entry of word
+    //@LDY #0
+    //@TRAM @WR.TPT(Y) WR.PTR
+    //@INY
+    //@TRAM @WR.TPT(Y) WR.PTR+1
+    //@INY
+    //@TRAM @WR.TPT(Y) WR.LEN	;  next word
+    //@INY
+    //@TRAM @WR.TPT(Y) WR.LEN+1
+    //@SB16AM WR.LEN WR.PTR
     const word = WORDS[word_index];
     const color = color_value_to_color(color_value);
-    // BEGIN
+    //@BEGIN
     for (word) |char| {
-        //  LDY #0
-        //  TRAM @WR.PTR(Y) AL.DIG
-        //  JSR AL.DRW
+        //@ LDY #0
+        //@ TRAM @WR.PTR(Y) AL.DIG
+        //@ JSR AL.DRW
         add_draw_character_command(
             char,
             color,
@@ -978,16 +1728,16 @@ fn draw_word(
             game_state,
         );
 
-        //  LDA AL.X
-        //  ADD #6		;  works only for 5x5
-        //  STA AL.X
+        //@ LDA AL.X
+        //@ ADD #6		;  works only for 5x5
+        //@ STA AL.X
         position.*[0] += 6;
 
-        // INC16 WR.PTR
-        // DEC WR.LEN
-        // EQEND
+        //@INC16 WR.PTR
+        //@DEC WR.LEN
+        //@EQEND
     }
-    // ADAI 6 AL.X
+    //@ADAI 6 AL.X
 }
 
 //RS.INI
@@ -999,28 +1749,28 @@ fn initialize_high_scores() void {
 fn initialize_wave_data(game_state: *GameState) void {
     //NOTE: all handled in initialization of GameState object
     {
-        // LDA #0
-        // STA WV.XCO
-        // STA WV.XCD
-        // STA WV.YCO
-        // STA WV.YCD
-        // STA WV.EOG
+        //@LDA #0
+        //@STA WV.XCO
+        //@STA WV.XCD
+        //@STA WV.YCO
+        //@STA WV.YCD
+        //@STA WV.EOG
 
-        // STA ST.TIM	;  init game time
-        // STA 1+ST.TIM
+        //@STA ST.TIM	;  init game time
+        //@STA 1+ST.TIM
 
-        // STA WV.SCF	;  don't scroll yet
+        //@STA WV.SCF	;  don't scroll yet
     }
 
     {
-        // LDA #7
-        // LDX EEEXTR
+        //@LDA #7
+        //@LDX EEEXTR
         //TODO make configurable
         const EXTRA_LIVES_OPTIONS = 0;
-        // IFNE
-        //  LDA #099
-        // ENDIF
-        // STA SC.NEL	;  next extra life at 70000
+        //@IFNE
+        //@ LDA #099
+        //@ENDIF
+        //@STA SC.NEL	;  next extra life at 70000
 
         if (EXTRA_LIVES_OPTIONS != 0) {
             game_state.next_extra_life = 0x99;
@@ -1029,39 +1779,47 @@ fn initialize_wave_data(game_state: *GameState) void {
         }
     }
 
-    // JSR WV.CMP
+    //@JSR WV.CMP
     compute_wave_parameters(game_state);
 
-    //TODO
-    // JSR MT.INI		; init motion objects
-
+    //@JSR MT.INI		; init motion objects
+    init_motion_objects(game_state);
 }
 
-// ;-------------------------------------------
-// ;  compute wave parameters, given game_state.wave_xco and game_state.wave_yco
+fn init_motion_objects(game_state: *GameState) void {
+    //@TRAI 0 MT.CUR
+    game_state.motion_objects_current = 0;
+    //@STA    MT.PRE
+    game_state.motion_objects_previous = 0;
+    //@TRAI 80 MT.BSL	; select buffer 1
+    game_state.motion_objects_selected_buffer = 1;
+}
+
+//@;-------------------------------------------
+//@;  compute wave parameters, given game_state.wave_xco and game_state.wave_yco
 fn compute_wave_parameters(game_state: *GameState) void {
 
-    //     JSR DF.UPD
+    //@    JSR DF.UPD
     update_current_wave_and_difficulty(game_state);
 
     //already done in initialize_castle()
     {
-        // ;  compute WV.OFF,  this assumes WV.SIZ=400
-        // 	TRAI 0 WV.OFF
-        // 	LDA WV.NUM
-        // 	ASLS 2
-        // 	STA WV.OFF+1
+        //@;  compute WV.OFF,  this assumes WV.SIZ=400
+        //@	TRAI 0 WV.OFF
+        //@	LDA WV.NUM
+        //@	ASLS 2
+        //@	STA WV.OFF+1
     }
 
-    // 	JSR CL.UPD
+    //@	JSR CL.UPD
     update_colors(game_state);
 
     //TODO.  We may not need to implement WV.MNM if its always dependent on WV.NUM
     {
-        // ;  update message pointer
-        // 	LDA WV.NUM
-        // 	STA WV.MNM
-        // 	TRAI 0FF WV.MFL
+        //@;  update message pointer
+        //@	LDA WV.NUM
+        //@	STA WV.MNM
+        //@	TRAI 0FF WV.MFL
     }
 }
 
@@ -1079,134 +1837,134 @@ fn update_current_wave_and_difficulty(game_state: *GameState) void {
         0x8,  0x7D, 0x5,  0xCB,
         0xE,
     };
-    // 	LDA WV.XCO
-    // ASLS 2
-    // ADD WV.YCO	;  wave number index
-    // TAX
+    //@	LDA WV.XCO
+    //@ASLS 2
+    //@ADD WV.YCO	;  wave number index
+    //@TAX
     const wave_number_table_index = game_state.wave_xco * 4 + game_state.wave_yco;
-    // LDA WV.TAB(X)
-    // TAY
-    // AND #0F
-    // STA WV.NUM
+    //@LDA WV.TAB(X)
+    //@TAY
+    //@AND #0F
+    //@STA WV.NUM
     game_state.wave_current = WAVE_NUMBER_TABLE[@intCast(wave_number_table_index)] & 0xF;
 
     //NOTE: handled in GameState initialization
-    //     ;  compute regions
-    // 	LDA #0
-    // 	STA CT.HR1
-    // 	STA CT.HR2
-    // 	STA CT.HR3
+    //@    ;  compute regions
+    //@	LDA #0
+    //@	STA CT.HR1
+    //@	STA CT.HR2
+    //@	STA CT.HR3
 
-    // 	LDX #0FF
+    //@	LDX #0FF
 
-    // 	TYA
-    // 	AND #30
-    // 	IFEQ		;  if both reg 1 and 2 off
-    // 	 		; turn off only one of them
+    //@	TYA
+    //@	AND #30
+    //@	IFEQ		;  if both reg 1 and 2 off
+    //@	 		; turn off only one of them
     if (wave_number_table_index & 0x30 == 0) {
-        // 	 LDA RANDOM
+        //@	 LDA RANDOM
         const r: i32 = @bitCast(toolbox.random32(&game_state.rng_state));
-        // 	 IFMI
-        // 	  STX CT.HR1
-        // 	 ELSE
-        // 	  STX CT.HR2
-        // 	 ENDIF
+        //@	 IFMI
+        //@	  STX CT.HR1
+        //@	 ELSE
+        //@	  STX CT.HR2
+        //@	 ENDIF
         if (r < 0) {
             game_state.castle_region_1 = -1;
         } else {
             game_state.castle_region_2 = -1;
         }
-        // 	ELSE
-        // 	 TYA
-        // 	 AND #10
+        //@	ELSE
+        //@	 TYA
+        //@	 AND #10
     } else if (wave_number_table_index & 0x10 == 0) {
 
-        // 	 IFEQ
-        // 	  STX CT.HR1
-        // 	 ENDIF
+        //@	 IFEQ
+        //@	  STX CT.HR1
+        //@	 ENDIF
 
         game_state.castle_region_1 = -1;
-        // 	 TYA
-        // 	 AND #20
-        // 	 IFEQ
+        //@	 TYA
+        //@	 AND #20
+        //@	 IFEQ
     } else if (wave_number_table_index & 0x20 == 0) {
-        // 	  STX CT.HR2
+        //@	  STX CT.HR2
         game_state.castle_region_2 = -1;
-        // 	 ENDIF
-        // 	ENDIF
+        //@	 ENDIF
+        //@	ENDIF
 
     }
-    // 	TYA
-    // 	AND #0C0
-    // 	IFEQ
+    //@	TYA
+    //@	AND #0C0
+    //@	IFEQ
     if (wave_number_table_index & 0xC0 == 0) {
-        // 	 STX CT.HR3
+        //@	 STX CT.HR3
         game_state.castle_region_3 = -1;
-        // 	ELSE
-        // 	 CMP #0C0
-        // 	 IFEQ
+        //@	ELSE
+        //@	 CMP #0C0
+        //@	 IFEQ
     } else if (wave_number_table_index == 0xC0) {
-        // 	  LDA RANDOM
-        // 	  AND #1F	;  0 to 31
-        // 	 STA CT.HR3
+        //@	  LDA RANDOM
+        //@	  AND #1F	;  0 to 31
+        //@	 STA CT.HR3
         game_state.castle_region_3 = @intCast(toolbox.random32(&game_state.rng_state) & 0x1F);
     } else {
-        // 	 ELSE
-        // 	  LDA #0
-        // 	 STA CT.HR3
+        //@	 ELSE
+        //@	  LDA #0
+        //@	 STA CT.HR3
         game_state.castle_region_3 = 0;
-        // 	 ENDIF
+        //@	 ENDIF
     }
-    // 	ENDIF
+    //@	ENDIF
 
-    // ;  compute difficulties
-    // 	LDA WV.XCO
-    // 	CMP #04
-    // 	IFCS
-    //  	 LDA #03
-    // 	ENDIF
-    // 	ASLS 2
-    // 	ADD WV.YCO
-    // 	STA WV.DF1	;  short term difficulty
+    //@;  compute difficulties
+    //@	LDA WV.XCO
+    //@	CMP #04
+    //@	IFCS
+    //@ 	 LDA #03
+    //@	ENDIF
+    //@	ASLS 2
+    //@	ADD WV.YCO
+    //@	STA WV.DF1	;  short term difficulty
     game_state.wave_short_term_difficulty =
         @min(3, game_state.wave_xco) * 4 +
         game_state.wave_yco;
 
-    // 	LDA WV.XCO
-    // 	CMP #09		;  max out at level 10
-    // 	IFCS
-    // 	 LDA #09
-    // 	ENDIF
-    // 	STA WV.DF2	;  long term difficulty
+    //@	LDA WV.XCO
+    //@	CMP #09		;  max out at level 10
+    //@	IFCS
+    //@	 LDA #09
+    //@	ENDIF
+    //@	STA WV.DF2	;  long term difficulty
     game_state.wave_long_term_difficulty = @min(9, game_state.wave_xco);
 
-    // 	TAY
-    // ;  difficulty offset
+    //@	TAY
+    //@;  difficulty offset
 
-    // 	LDA EEDIFF
+    //@	LDA EEDIFF
     //TODO make configurable
     const CONFIGURED_DIFFICULTY_OFFSET = 0;
 
-    // 	AND #03
+    //@	AND #03
     var difficulty_offset: isize = CONFIGURED_DIFFICULTY_OFFSET & 3;
 
-    // 	CMP #3
-    // 	IFEQ
-    // 	 LDA #0FF
-    // 	ENDIF
+    //@	CMP #3
+    //@	IFEQ
+    //@	 LDA #0FF
+    //@	ENDIF
     if (difficulty_offset == 3) {
         difficulty_offset = -1;
     }
 
-    // 	CPY #5
-    // 	IFCS
-    // 	 LDA #0		;  all are equal starting at level 6
-    // 	ENDIF
+    //@	CPY #5
+    //@	IFCS
+    //@	 LDA #0		;  all are equal starting at level 6
+    //@	ENDIF
     if (game_state.wave_xco >= 5) {
         difficulty_offset = 0;
     }
 
-    // 	STA WV.DFO
+    //@	STA WV.DFO
     game_state.wave_difficulty_offset = difficulty_offset;
 }
 //CL.UPD
@@ -1236,8 +1994,8 @@ fn initialize_castle(game_state: *GameState) void {
             block_loop: while (true) {
                 initialize_block_2(game_state);
                 //LDY #0
-                // LDA @CT.A2L(Y)
-                // AND #3
+                //@LDA @CT.A2L(Y)
+                //@AND #3
 
                 //On the first iteration of this loop, the region is the 0x1FBth byte
                 //of the current wave data
@@ -1252,17 +2010,17 @@ fn initialize_castle(game_state: *GameState) void {
                         else => unreachable,
                     });
                     if (height_offset_of_region < 0) {
-                        //  LDA @CT.A2L(Y)
-                        //  AND #^B11101111
-                        //  STA @CT.A2L(Y)	;  no gems when height=0
+                        //@ LDA @CT.A2L(Y)
+                        //@ AND #^B11101111
+                        //@ STA @CT.A2L(Y)	;  no gems when height=0
                         game_state.current_wave_data[game_state.castle_a2l] &=
                             0b11101111;
-                        // LDA #0
-                        // STA @CT.ADL(Y)
+                        //@LDA #0
+                        //@STA @CT.ADL(Y)
                         game_state.current_wave_data[game_state.castle_adl] = 0;
                     } else {
-                        // ADD @CT.ADL(Y)
-                        // STA @CT.ADL(Y)
+                        //@ADD @CT.ADL(Y)
+                        //@STA @CT.ADL(Y)
                         game_state.current_wave_data[game_state.castle_adl] +%=
                             @as(u8, @bitCast(height_offset_of_region));
                     }
@@ -1293,14 +2051,14 @@ fn initialize_castle(game_state: *GameState) void {
     }
 
     //TODO:
-    //     if (game_state.warp_level > 0 and !game_state.attract_mode) {
-    //         //Putting in tunnel for warp, Don't care about this right now
-    //     }
-    // }
+    //@    if (game_state.warp_level > 0 and !game_state.attract_mode) {
+    //@        //Putting in tunnel for warp, Don't care about this right now
+    //@    }
+    //@}
 }
 fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState) void {
-    // CT.HSS: .WORD SC.HI1+HFSIZ-1,SC.HI2+HFSIZ-1,SC.HI3+HFSIZ-1
-    // 	.WORD SC.HI2+HFSIZ-1,SC.HI3+HFSIZ-1
+    //@CT.HSS: .WORD SC.HI1+HFSIZ-1,SC.HI2+HFSIZ-1,SC.HI3+HFSIZ-1
+    //@	.WORD SC.HI2+HFSIZ-1,SC.HI3+HFSIZ-1
     const initials = [_]toolbox.Rune{
         game_state.scoreboard.entries[0].name.rune_at(0).rune,
         game_state.scoreboard.entries[0].name.rune_at(1).rune,
@@ -1308,86 +2066,86 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
         game_state.scoreboard.entries[0].name.rune_at(1).rune,
         game_state.scoreboard.entries[0].name.rune_at(2).rune,
     };
-    // ;  get initial
-    // LDA TEMP4
-    // ASL
-    // TAX
-    // LDA PL.UP
-    // IFEQ		;  player 1
-    //  LDA CT.HSS(X)
-    //  STA TEMP1
-    //  LDA 1+CT.HSS(X)
-    // ELSE		;  player 2
-    //  LDA CT.HS2(X)
-    //  STA TEMP1
-    //  LDA 1+CT.HS2(X)
-    // ENDIF
+    //@;  get initial
+    //@LDA TEMP4
+    //@ASL
+    //@TAX
+    //@LDA PL.UP
+    //@IFEQ		;  player 1
+    //@ LDA CT.HSS(X)
+    //@ STA TEMP1
+    //@ LDA 1+CT.HSS(X)
+    //@ELSE		;  player 2
+    //@ LDA CT.HS2(X)
+    //@ STA TEMP1
+    //@ LDA 1+CT.HS2(X)
+    //@ENDIF
 
-    // STA 1+TEMP1
+    //@STA 1+TEMP1
     //NOTE: for above, ignore player 2 code
 
-    // CT.RMS: .WORD CTRAM+<6*16>+2,CTRAM+<6*16>+7,CTRAM+<6*16>+0C
-    // 	.WORD CTRAM+<0B*16>+2,CTRAM+<10*16>+2
+    //@CT.RMS: .WORD CTRAM+<6*16>+2,CTRAM+<6*16>+7,CTRAM+<6*16>+0C
+    //@	.WORD CTRAM+<0B*16>+2,CTRAM+<10*16>+2
     const castle_rms = [_]usize{
         (0x6 * 0x16) + 2, (0x6 * 0x16) + 7,  (0x6 * 0x16) + 0xC,
         (0xB * 0x16) + 2, (0x10 * 0x16) + 2,
     };
-    // TR16AM CT.RMS(X) CT.ADL
+    //@TR16AM CT.RMS(X) CT.ADL
     game_state.castle_adl = castle_rms[initial_index];
 
-    // LDY #0
-    // LDA @TEMP1(Y)		;  now have initial
-    // SUB #4A
+    //@LDY #0
+    //@LDA @TEMP1(Y)		;  now have initial
+    //@SUB #4A
 
-    // STA TEMP1	;  mult by 5 so (A) points to sym
-    // ASLS 2
-    // ADD TEMP1
-    // STA TEMP1
+    //@STA TEMP1	;  mult by 5 so (A) points to sym
+    //@ASLS 2
+    //@ADD TEMP1
+    //@STA TEMP1
     var letter_bitmap_array_cursor = (initials[initial_index] - 'A') * 5;
 
-    // TRAI 4 TEMP3
-    // BEGIN
+    //@TRAI 4 TEMP3
+    //@BEGIN
     for (0..CHARACTER_BITMAP_HEIGHT) |_| {
 
-        // LDX TEMP1
-        // LDA AL.55L(X)
-        // STA TEMP5
+        //@LDX TEMP1
+        //@LDA AL.55L(X)
+        //@STA TEMP5
         var character_row = LETTER_BITMAPS[letter_bitmap_array_cursor];
 
-        // LDX #4
-        // BEGIN
+        //@LDX #4
+        //@BEGIN
         for (0..CHARACTER_BITMAP_WIDTH) |_| {
-            // ASL TEMP5
-            // IFCS
+            //@ASL TEMP5
+            //@IFCS
             if (character_row & 0x80 != 0) {
-                //  LDA @CT.ADL(Y)
-                //  ADD #0A
-                //  STA @CT.ADL(Y)
+                //@ LDA @CT.ADL(Y)
+                //@ ADD #0A
+                //@ STA @CT.ADL(Y)
                 game_state.current_wave_data[game_state.castle_adl] += 0xA;
-                //  JSR BL.IN2
+                //@ JSR BL.IN2
                 initialize_block_2(game_state);
-                //  LDA @CT.A2L(Y)
-                //  AND #^B11111011	;  Accessibility=0
-                //  STA @CT.A2L(Y)
+                //@ LDA @CT.A2L(Y)
+                //@ AND #^B11111011	;  Accessibility=0
+                //@ STA @CT.A2L(Y)
                 game_state.current_wave_data[game_state.castle_a2l] &=
                     ~@as(u8, 0b11111011);
 
-                // ENDIF
+                //@ENDIF
             }
             character_row <<= 1;
-            // SB16AI CT.ADL 16
+            //@SB16AI CT.ADL 16
             game_state.castle_adl -= 0x16;
-            // DEX
-            // MIEND
+            //@DEX
+            //@MIEND
         }
 
-        // AD16AI CT.ADL 16*5+1
+        //@AD16AI CT.ADL 16*5+1
         game_state.castle_adl += 0x16 * 5 + 1;
 
-        // INC TEMP1
+        //@INC TEMP1
         letter_bitmap_array_cursor += 1;
-        // DEC TEMP3
-        // MIEND
+        //@DEC TEMP3
+        //@MIEND
     }
 }
 //CR.INI
@@ -1398,7 +2156,7 @@ fn initialize_castle_row(game_state: *GameState) void {
     //TRAI CT.VST CR.VST
     game_state.castle_row_position = .{ 0x5C, 0x86 };
 
-    // TRAI CT.XDM CT.CNT
+    //@TRAI CT.XDM CT.CNT
     game_state.castle_row_count = 0x13;
 }
 //BL.INI
@@ -1415,49 +2173,49 @@ fn initialize_block(game_state: *GameState) void {
 }
 //BL.IN2
 fn initialize_block_2(game_state: *GameState) void {
-    // LDY #0
-    // TRAM @CT.ADL(Y) BL.HEI
+    //@LDY #0
+    //@TRAM @CT.ADL(Y) BL.HEI
     //When this is first called after initialize_city_row()
     //this gets the 0x17th byte of the current wave data.
     //For wave 0, this value is 4.
     game_state.castle_block_height = game_state.current_wave_data[game_state.castle_adl];
 
-    // TR16AM CT.ADL,CT.A2L
-    // AD16AI CT.A2L,16*16
+    //@TR16AM CT.ADL,CT.A2L
+    //@AD16AI CT.A2L,16*16
     game_state.castle_a2l = game_state.castle_adl + 0x16 * 0x16; //offset of 0x1E4;
     //The above line results in  game_state.castle_a2l having the value 0x1FB in the
     //first iteration of this loop
 }
-// BL.ADV:
-// ;  advance to next block
+//@BL.ADV:
+//@;  advance to next block
 fn advance_block(game_state: *GameState) void {
-    // LDA BL.HST
-    // ADD #CT.YSZ
-    // STA BL.HST
-    // INC BL.VST
-    // INC BL.VST
+    //@LDA BL.HST
+    //@ADD #CT.YSZ
+    //@STA BL.HST
+    //@INC BL.VST
+    //@INC BL.VST
     game_state.castle_block_position += .{ 8, 2 };
 }
 //CR.ADV
 fn advance_castle_row(game_state: *GameState) void {
-    // LDA CR.HST
-    // SUB #CT.XSZ
-    // STA CR.HST
-    // LDA CR.VST
-    // ADD #CT.XSZ
-    // STA CR.VST
+    //@LDA CR.HST
+    //@SUB #CT.XSZ
+    //@STA CR.HST
+    //@LDA CR.VST
+    //@ADD #CT.XSZ
+    //@STA CR.VST
     game_state.castle_row_position += .{ -4, 4 };
 }
 //CT.DRW
 fn draw_castle(game_state: *GameState) void {
-    // ;  traverse through rows
-    // TR16AI CTRAM CT.ACL
+    //@;  traverse through rows
+    //@TR16AI CTRAM CT.ACL
     game_state.castle_acl = 0;
-    // TR16AI CTRAM+1 CT.ARL
+    //@TR16AI CTRAM+1 CT.ARL
     game_state.castle_arl = 1;
-    // TR16AI CTRAM+2 CT.AFL
+    //@TR16AI CTRAM+2 CT.AFL
     game_state.castle_afl = 2;
-    // TR16AI CTRAM+CT.YDM+3 CT.ALL
+    //@TR16AI CTRAM+CT.YDM+3 CT.ALL
     game_state.castle_all = 0 + 0x13 + 0x3; //0x16
 
     initialize_castle_row(game_state);
@@ -1471,160 +2229,160 @@ fn draw_castle_row(game_state: *GameState) void {
     while (true) {
         initialize_block_2(game_state);
         {
-            // ;   compute if necessary to draw face1,face2
-            // TR16AM CT.ADL CT.ADB	; square before ADL X dir
-            // INC16 CT.ADB
+            //@;   compute if necessary to draw face1,face2
+            //@TR16AM CT.ADL CT.ADB	; square before ADL X dir
+            //@INC16 CT.ADB
             game_state.castle_adb = game_state.castle_adl + 1;
-            // TRAM @CT.ADB(Y) TEMP1
+            //@TRAM @CT.ADB(Y) TEMP1
             //NOTE: Y is set to 0 in initialize_block_2();
             const next_block_height = wave_data[game_state.castle_adb];
 
-            // LDA BL.HEI
-            // SUB TEMP1
+            //@LDA BL.HEI
+            //@SUB TEMP1
             const height_difference = game_state.castle_block_height - next_block_height;
             if (height_difference < 0) {
-                //  LDA BL.VST
-                //  SUB BL.HEI
-                //  STA BL.V1S
+                //@ LDA BL.VST
+                //@ SUB BL.HEI
+                //@ STA BL.V1S
                 game_state.castle_block_v1s = game_state.castle_block_position[1] -
                     game_state.castle_block_height;
-                //  TRAI 0 BL.V1N
+                //@ TRAI 0 BL.V1N
                 game_state.castle_block_v1n = 0;
             } else {
-                //  STA BL.V1N
+                //@ STA BL.V1N
                 game_state.castle_block_v1n = height_difference;
 
-                //  LDA BL.VST
-                //  SUB TEMP1
-                //  STA BL.V1S
+                //@ LDA BL.VST
+                //@ SUB TEMP1
+                //@ STA BL.V1S
                 game_state.castle_block_v1s = game_state.castle_block_position[1] -
                     next_block_height;
             }
         }
         {
             //TR16AM CT.ADL CT.ADB	; square before ADL Y dir
-            // AD16AI CT.ADB 16
+            //@AD16AI CT.ADB 16
             game_state.castle_adb = game_state.castle_adl + 0x16;
 
-            // TRAM @CT.ADB(Y) TEMP1
+            //@TRAM @CT.ADB(Y) TEMP1
             //NOTE: Y is set to 0 in initialize_block_2();
             const next_block_height = wave_data[game_state.castle_adb];
 
-            // LDA BL.HEI
-            // SUB TEMP1
+            //@LDA BL.HEI
+            //@SUB TEMP1
             const height_difference = game_state.castle_block_height - next_block_height;
             if (height_difference < 0) {
-                //  LDA BL.VST
-                //  SUB BL.HEI
-                //  STA BL.V2S
+                //@ LDA BL.VST
+                //@ SUB BL.HEI
+                //@ STA BL.V2S
                 game_state.castle_block_v2s = game_state.castle_block_position[1] -
                     game_state.castle_block_height;
-                //  TRAI 0 BL.V2N
+                //@ TRAI 0 BL.V2N
                 game_state.castle_block_v2n = 0;
             } else {
-                //  STA BL.V2N
+                //@ STA BL.V2N
                 game_state.castle_block_v2n = height_difference;
-                //  LDA BL.VST
-                //  SUB TEMP1
-                //  STA BL.V2S
+                //@ LDA BL.VST
+                //@ SUB TEMP1
+                //@ STA BL.V2S
                 game_state.castle_block_v2s = game_state.castle_block_position[1] -
                     next_block_height;
             }
         }
         //;  priority
-        // LDY #0
-        // LDA @CT.A2L(Y)
-        // JSR CL.PR
+        //@LDY #0
+        //@LDA @CT.A2L(Y)
+        //@JSR CL.PR
         set_bitmap_values_of_faces(
             wave_data[game_state.castle_a2l],
             game_state,
         );
-        // ; accessibility
-        // LDA @CT.A2L(Y)
-        // AND #4
-        // IFNE
-        //  LDA FC.BV3
-        // ELSE
-        //  LDA FC.BVC
-        // ENDIF
-        // STA CT.BV3
+        //@; accessibility
+        //@LDA @CT.A2L(Y)
+        //@AND #4
+        //@IFNE
+        //@ LDA FC.BV3
+        //@ELSE
+        //@ LDA FC.BVC
+        //@ENDIF
+        //@STA CT.BV3
         game_state.face3_color_value_hidden_or_not = if ((wave_data[game_state.castle_a2l] & 0x4) != 0)
             game_state.face_color_values[0] //yes, this is FC.BV3
         else
             game_state.face_color_values[4]; //this is FC.BVC
 
         //;  tunnel
-        // LDA @CT.A2L(Y)
-        // AND #20
-        // STA CT.TUN
+        //@LDA @CT.A2L(Y)
+        //@AND #20
+        //@STA CT.TUN
         game_state.has_tunnel = wave_data[game_state.castle_a2l] & 0x20 != 0;
 
-        // JSR BL.EDT
+        //@JSR BL.EDT
         determine_edge_switches(game_state);
 
         if (game_state.castle_block_height != 0) {
             draw_block(game_state);
         }
 
-        // 	INC16 CT.ADL
+        //@	INC16 CT.ADL
         game_state.castle_adl += 1;
 
-        // 	DEC CR.CNT
+        //@	DEC CR.CNT
         game_state.castle_block_count -= 1;
         if (game_state.castle_block_count < 0) {
             break;
         }
         advance_block(game_state);
     }
-    // ; increment ADL,ACL,ARL,AFL,ALL twice
+    //@; increment ADL,ACL,ARL,AFL,ALL twice
 
-    // 	INC16 CT.ADL
-    // 	INC16 CT.ADL
+    //@	INC16 CT.ADL
+    //@	INC16 CT.ADL
     game_state.castle_adl += 2;
-    // 	INC16 CT.ACL
-    // 	INC16 CT.ACL
+    //@	INC16 CT.ACL
+    //@	INC16 CT.ACL
     game_state.castle_acl += 2;
-    // 	INC16 CT.ARL
-    // 	INC16 CT.ARL
+    //@	INC16 CT.ARL
+    //@	INC16 CT.ARL
     game_state.castle_arl += 2;
-    // 	INC16 CT.AFL
-    // 	INC16 CT.AFL
+    //@	INC16 CT.AFL
+    //@	INC16 CT.AFL
     game_state.castle_afl += 2;
-    // 	INC16 CT.ALL
-    // 	INC16 CT.ALL
+    //@	INC16 CT.ALL
+    //@	INC16 CT.ALL
     game_state.castle_all += 2;
 }
 //BL.DRW
 fn draw_block(game_state: *GameState) void {
-    //  TRAM BL.HST FC.HST
-    // TRAM BL.VST FC.VST
+    //@ TRAM BL.HST FC.HST
+    //@TRAM BL.VST FC.VST
     game_state.face_position = game_state.castle_block_position;
 
-    // TRAM BL.V1S FC.V1S
-    // TRAM BL.V1N FC.V1N
+    //@TRAM BL.V1S FC.V1S
+    //@TRAM BL.V1N FC.V1N
     game_state.face_v1s = game_state.castle_block_v1s;
     game_state.face_v1n = game_state.castle_block_v1n;
-    // JSR FACE1
+    //@JSR FACE1
     draw_face1(game_state);
 
-    // TRAM BL.V2S FC.V2S
-    // TRAM BL.V2N FC.V2N
+    //@TRAM BL.V2S FC.V2S
+    //@TRAM BL.V2N FC.V2N
     game_state.face_v2s = game_state.castle_block_v2s;
     game_state.face_v2n = game_state.castle_block_v2n;
-    // JSR FACE2
+    //@JSR FACE2
     draw_face2(game_state);
 
-    // LDA FC.VST
-    // SUB BL.HEI
-    // STA FC.VST
+    //@LDA FC.VST
+    //@SUB BL.HEI
+    //@STA FC.VST
     game_state.face_position[1] -= game_state.castle_block_height;
-    // JSR FACE3
+    //@JSR FACE3
     draw_face3(game_state);
 
-    // LDA CT.TUN
-    // IFNE
-    //  JSR FC.TUN
-    // ENDIF
+    //@LDA CT.TUN
+    //@IFNE
+    //@ JSR FC.TUN
+    //@ENDIF
     if (game_state.has_tunnel) {
         draw_tunnel(game_state);
     }
@@ -1633,29 +2391,29 @@ fn draw_block(game_state: *GameState) void {
 //GM.AT
 fn update_attract_mode(game_state: *GameState) void {
 
-    // 	JSR MN.FRA
+    //@	JSR MN.FRA
     if (!frame_handler(game_state)) {
         return;
     }
-    // 	TRAI 0 ATRACT		; atract mode is on
+    //@	TRAI 0 ATRACT		; atract mode is on
     game_state.is_in_attract_mode = true;
 
     //TODO: handle credits
-    // 	LDA $$CRDT
-    // 	IFNE
-    // 	 JSR MN.SBD		;  start button decode
-    // 	ENDIF
+    //@	LDA $$CRDT
+    //@	IFNE
+    //@	 JSR MN.SBD		;  start button decode
+    //@	ENDIF
 
-    // 	TRAI 048 AL.Y
-    // 	TRAI 0B1 AL.X
+    //@	TRAI 048 AL.Y
+    //@	TRAI 0B1 AL.X
     var word_position = V2{ 0xB1, 0x48 };
 
-    // 	LDA FRAME
-    // 	AND #03F
-    // 	IFEQ
+    //@	LDA FRAME
+    //@	AND #03F
+    //@	IFEQ
     if (game_state.frame & 0x3F == 0) {
-        // 	 LDA #11.*6
-        // 	 JSR SC.ERA
+        //@	 LDA #11.*6
+        //@	 JSR SC.ERA
         screen_erase(
             word_position,
             0x42,
@@ -1663,77 +2421,77 @@ fn update_attract_mode(game_state: *GameState) void {
         );
 
         //TODO: handle different coin states
-        // I don't think we will have something called "free play?"
-        // 	 LDA $CMODE
-        // 	 AND #03
-        // 	 IFEQ
-        // 	  TRAI 2 $$CRDT
-        // 	  LDA #59		;  free play
-        // 	 ELSE
-        // 	 LDA $$CRDT
-        // 	 IFEQ
-        // 	  LDA #0A		;  insert coin
-        // 	 ELSE
-        // 	  LDA #10		;  press start
-        // 	 ENDIF
-        // 	 ENDIF
-        // 	 JSR WR.DRW
+        //@I don't think we will have something called "free play?"
+        //@	 LDA $CMODE
+        //@	 AND #03
+        //@	 IFEQ
+        //@	  TRAI 2 $$CRDT
+        //@	  LDA #59		;  free play
+        //@	 ELSE
+        //@	 LDA $$CRDT
+        //@	 IFEQ
+        //@	  LDA #0A		;  insert coin
+        //@	 ELSE
+        //@	  LDA #10		;  press start
+        //@	 ENDIF
+        //@	 ENDIF
+        //@	 JSR WR.DRW
         draw_word(
             0xA,
             &word_position,
             0x7F,
             game_state,
         );
-        // 	ELSE
-        // 	CMP #20
-        // 	IFEQ
+        //@	ELSE
+        //@	CMP #20
+        //@	IFEQ
     } else if (game_state.frame & 0x3F == 0x20) {
-        // 	 LDA #11.*6
-        // 	 JSR SC.ERA
+        //@	 LDA #11.*6
+        //@	 JSR SC.ERA
         screen_erase(
             word_position,
             0x42,
             game_state,
         );
-        // 	ENDIF
-        // 	ENDIF
+        //@	ENDIF
+        //@	ENDIF
     }
 
-    // 	LDA FRAME
-    // 	AND #1F			;  update once per half sec
-    // 	IFEQ
+    //@	LDA FRAME
+    //@	AND #1F			;  update once per half sec
+    //@	IFEQ
     if (game_state.frame & 0x1F == 0) {
 
-        // 	TRAI 0C5 AL.X		;  erase for credit display
-        // 	TRAI 058 AL.Y
+        //@	TRAI 0C5 AL.X		;  erase for credit display
+        //@	TRAI 058 AL.Y
         word_position = V2{ 0xC5, 0x58 };
-        // 	LDA #6*6
-        // 	JSR SC.ERA
+        //@	LDA #6*6
+        //@	JSR SC.ERA
         screen_erase(
             word_position,
             6 * 6,
             game_state,
         );
 
-        // 	LDA $CNCT
-        // 	IFEQ
-        // 	 TRAI 0D0 AL.X
-        // 	ENDIF
+        //@	LDA $CNCT
+        //@	IFEQ
+        //@	 TRAI 0D0 AL.X
+        //@	ENDIF
         if (game_state.number_of_credits == 0) {
             word_position[0] = 0xD0;
         }
 
-        // 	LDA $$CRDT
-        // 	IFEQ
+        //@	LDA $$CRDT
+        //@	IFEQ
         if (game_state.number_of_credits == 0) {
-            // 	 LDY $CNCT
-            // 	 BNE 10$
-            // 	ENDIF
+            //@	 LDY $CNCT
+            //@	 BNE 10$
+            //@	ENDIF
             //NOTE: we won't have a concept of 1/2 credits so if
-            // $$CRDT (credit count) is 0
-            // $CNCT (coin count) would also be 0.
+            //@$$CRDT (credit count) is 0
+            //@$CNCT (coin count) would also be 0.
 
-            // 	JSR DG.2OT
+            //@	JSR DG.2OT
             draw_2_digit_number_suppress_leading_zero(
                 game_state.number_of_credits,
                 word_position,
@@ -1741,79 +2499,57 @@ fn update_attract_mode(game_state: *GameState) void {
             );
         }
 
-        // 10$:
+        //@10$:
 
-        // 	LDA AL.X
-        // 	ADD #4
-        // 	STA AL.X
+        //@	LDA AL.X
+        //@	ADD #4
+        //@	STA AL.X
         word_position[0] += 4;
 
-        // 	LDA $CNCT
-        // 	IFNE
-        // 	 LDA #17
-        // 	 JSR WR.DRW	;  1/2 credit display
-        // 	ENDIF
+        //@	LDA $CNCT
+        //@	IFNE
+        //@	 LDA #17
+        //@	 JSR WR.DRW	;  1/2 credit display
+        //@	ENDIF
         //NOTE: we won't have a concept of 1/2 credits
-        //      so, we do not implement the above
+        //@     so, we do not implement the above
 
-        // 	ENDIF
+        //@	ENDIF
     }
 
-    // ;  flash LED's
-    // 	LDA HW.COK
-    // 	IFNE
-    // 	LDX $$CRDT
-    // 	IFNE
-
-    // 	LDY #0
-    // 	LDA FRAME
-    // 	AND #20
-    // 	IFNE
-    // 	 LDY #0FF
-    // 	ENDIF
-    // 	STY HW.LE1
-
-    // 	CPX #02
-    // 	IFCS
-    // 	STY HW.LE2
-    // 	ENDIF
-
-    // 	ENDIF
-    // 	ENDIF
-
-    // 	LDA $$CRDT
-    // 	ORA $CNCT	;  no half credits
-    // 	IFEQ
+    //@	LDA $$CRDT
+    //@	ORA $CNCT	;  no half credits
+    //@	IFEQ
     if (game_state.number_of_credits == 0) {
 
-        // 	DEC MN.DEL
-        // 	IFEQ
-        // 	DEC 1+MN.DEL
+        //@	DEC MN.DEL
+        //@	IFEQ
+        //@	DEC 1+MN.DEL
         game_state.main_loop_delay -= 1;
-        // 	IFMI
+        //@	IFMI
         if (game_state.main_loop_delay < 0) {
             //NOTE this will be a 1 player game only. So ignore all 2 player references
 
-            // 	  TRAI 1 P1.LIV
+            //@	  TRAI 1 P1.LIV
             game_state.lives = 1;
-            // 	  TRAI 0 PL.FLG		;  one player game
-            // 	  STA P2.LIV
-            // 	  STA PL.UP
-            // 	  STA WV.WAR		;  reset warp
+            //@	  TRAI 0 PL.FLG		;  one player game
+            //@	  STA P2.LIV
+            //@	  STA PL.UP
+            //@	  STA WV.WAR		;  reset warp
             game_state.wave_enable_warp = false;
-            // 	  JSR MN.SCI
+            //@	  JSR MN.SCI
             initialize_and_draw_player_score(game_state);
-            // 	  JSR GM.ST0
+            //@	  JSR GM.ST0
             initialize_game_start_state(game_state);
-            // ;	  JMP GM.ENL
-            // 	ENDIF
+            //@;	  JMP GM.ENL
+            //@	ENDIF
         }
-        // 	ENDIF
+        //@	ENDIF
 
-        // 	ENDIF
+        //@	ENDIF
     }
 
-    // 	JMP GM.ENL
+    //@	JMP GM.ENL
 }
 
 //SC.ERA
@@ -1838,21 +2574,22 @@ inline fn draw_2_digit_number_suppress_leading_zero(
     position: V2,
     game_state: *GameState,
 ) void {
-    //  JSR AL.CNV
-    // 	LDX #0
-    // 	STX SC.FNZ	; 1= found first non-zero digit
+    //@ JSR AL.CNV
+    //@	LDX #0
+    //@	STX SC.FNZ	; 1= found first non-zero digit
+    var suppress_leading_zero = true;
     draw_2_digit_number(
         number,
         position,
-        true,
+        &suppress_leading_zero,
         game_state,
     );
 }
-// DG.2HT
+//@DG.2HT
 fn draw_2_digit_number(
     number: isize,
     start_position: V2,
-    suppress_leading_zero: bool,
+    suppress_leading_zero: *bool,
     game_state: *GameState,
 ) void {
     if (number < 0) {
@@ -1862,86 +2599,76 @@ fn draw_2_digit_number(
         );
     }
 
-    // 	PHA
-    // 	LSRS 4
-    // 	STA SC.DIG
+    //@	PHA
+    //@	LSRS 4
+    //@	STA SC.DIG
 
-    // 	TRAI 2*6 SC.LEF	; pixels left to erase
+    //@	TRAI 2*6 SC.LEF	; pixels left to erase
     var pixels_left_to_erase: isize = 2 * 6; //6 pixels per digit
     var position = start_position;
-    // ;  first digit
-    // 	JSR AL.DGO
-    draw_digit(
-        @intCast(@divTrunc(number, 10)),
-        &position,
-        suppress_leading_zero,
-        &pixels_left_to_erase,
-        game_state,
-    );
+    var n = number;
 
-    // ;  second digit
-    // 	INC SC.FNZ	;  output digit even if score=0
-    // 	PLA
-    // 	AND #0F
-    // 	STA SC.DIG
-    // 	JSR AL.DGO
-    draw_digit(
-        @intCast(@divTrunc(number, 10)),
-        &position,
-        false,
-        &pixels_left_to_erase,
-        game_state,
-    );
+    for (0..2) |_| {
+        //@	JSR AL.DGO
+        draw_digit(
+            @intCast(@mod(n, 10)),
+            &position,
+            suppress_leading_zero,
+            &pixels_left_to_erase,
+            game_state,
+        );
+        n = @divExact(n, 10);
+        suppress_leading_zero.* = false;
+    }
 
-    // 	LDA SC.LEF
-    // 	JSR SC.ERA
+    //@	LDA SC.LEF
+    //@	JSR SC.ERA
     screen_erase(
         position,
         pixels_left_to_erase,
         game_state,
     );
 }
-// AL.DGO:
+//@AL.DGO:
 fn draw_digit(
     digit: u8,
     position: *V2,
-    suppress_zero: bool,
+    suppress_zero: *bool,
     pixels_left_to_erase: *isize,
     game_state: *GameState,
 ) void {
-    // 	LDA SC.FNZ	;  zero suppress
-    // 	IFEQ
-    // 	LDA SC.DIG
-    // 	IFEQ
-    // 	JMP 50$
-    if (suppress_zero and digit == 0) {
+    //@	LDA SC.FNZ	;  zero suppress
+    //@	IFEQ
+    //@	LDA SC.DIG
+    //@	IFEQ
+    //@	JMP 50$
+    if (suppress_zero.* and digit == 0) {
         return;
     }
-    // 	ELSE
+    //@	ELSE
 
-    // NOTE: this will be handled by the callee
-    // 	INC SC.FNZ
-    // suppress_zero.* = true;
+    //@	INC SC.FNZ
+    suppress_zero.* = false;
 
-    // 	ENDIF
-    // 	ENDIF
+    //@	ENDIF
+    //@	ENDIF
 
-    // 	LDA #6
-    // 	JSR SC.ERA
+    //@	LDA #6
+    //@	JSR SC.ERA
     screen_erase(
         position.*,
         6,
         game_state,
     );
 
-    // 	LDA SC.DIG
-    // 	ADD #40
-    // 	STA AL.DIG
+    //@	LDA SC.DIG
+    //@	ADD #40
+    //@	STA AL.DIG
 
-    // 	CL.ALP=07F
+    //@	CL.ALP=07F
     const color = color_value_to_color(0x7F);
-    // 	TRAI CL.ALP AL.COL
-    // 	JSR AL.DRW
+    //@	TRAI CL.ALP AL.COL
+    //@	JSR AL.DRW
     add_draw_character_command(
         (digit % 10) + '0',
         color,
@@ -1949,69 +2676,137 @@ fn draw_digit(
         game_state,
     );
 
-    // 	ADAI 6 AL.X
+    //@	ADAI 6 AL.X
     position.*[0] += 6;
-    // 	SBAI 6 SC.LEF
+    //@	SBAI 6 SC.LEF
     pixels_left_to_erase.* -= 6;
-    // 50$:
+    //@50$:
 }
 
 //MN.SCI
 fn initialize_and_draw_player_score(game_state: *GameState) void {
-    _ = game_state;
+    //@	LDA #0
+    //@STA P1.SCO
+    //@STA P1.SCO+1
+    //@STA P1.SCO+2
+    game_state.score = 0;
+    //@JSR SC.2PL		;  and output too
+    draw_score(game_state);
+}
+
+//SC.2PL
+//SC.OUT
+//SC.OT2
+fn draw_score(game_state: *GameState) void {
+    //@LDA #2E
+    //@STA AL.Y
+    //@TRAI 10 AL.X
+
+    //@TR24AM SC.SCO SC.NM	;  score
+    //@JSR SC.NDS
+    draw_6_digit_number(
+        game_state.score,
+        .{ 0x10, 0x2E },
+        game_state,
+    );
+}
+
+//SC.NDS
+fn draw_6_digit_number(
+    number: isize,
+    start_position: V2,
+    game_state: *GameState,
+) void {
+    //TRAI 6*6 SC.LEF	; pixels left to erase
+    var pixels_left_to_erase: isize = 0x6 * 0x6;
+    //@	TRAI 0 SC.FNZ	; 1= found first non-zero digit
+    var suppress_zero = true;
+
+    //@;  first digit
+    //@	LDA SC.NM+2
+    //@	LSRS 4
+    //@	STA SC.DIG
+    //@	JSR AL.DGO
+    var n = number;
+    var position = start_position;
+    for (0..5) |_| {
+        draw_digit(
+            @intCast(@mod(n, 10)),
+            &position,
+            &suppress_zero,
+            &pixels_left_to_erase,
+            game_state,
+        );
+        n = @divTrunc(n, 10);
+    }
+    suppress_zero = false;
+    draw_digit(
+        @intCast(@mod(n, 10)),
+        &position,
+        &suppress_zero,
+        &pixels_left_to_erase,
+        game_state,
+    );
+    //@LDA SC.LEF
+    //@JSR SC.ERA
+    screen_erase(position, pixels_left_to_erase, game_state);
 }
 
 //GM.ST0
 fn initialize_game_start_state(game_state: *GameState) void {
-    _ = game_state;
+    //@TRAI 1 GM.STA
+    game_state.current_state = .StartGame;
+
+    //NOTE: for trackball flash which is not on the playdate
+    //@TRAI 0FF TFLASH
 }
 
 //MN.FRA
 //This returns false if there pending draw commands that should be flushed
 //Before we continue drawing more things.
 fn frame_handler(game_state: *GameState) bool {
-    //     10$:	 LSR SYNC		;
-    // 	 BCC 10$		;  frame handler
+    //@    10$:	 LSR SYNC		;
+    //@	 BCC 10$		;  frame handler
 
     //NOTE: this is how we sync the frame
     if (!game_state.draw_command_queue.is_empty()) {
         return false;
     }
-    // 	INC16 FRAME
+    //@	INC16 FRAME
     game_state.frame +%= 1;
-    // 	INC16 WV.TIM
+    //@	INC16 WV.TIM
     game_state.wave_time +%= 1;
 
-    // 	LDA HW.STS		;  self test switch
-    // 	AND #MA.STS
-    // 	IFEQ
-    // 	 JMP MN.SLT
-    // 	ENDIF
+    //@	LDA HW.STS		;  self test switch
+    //@	AND #MA.STS
+    //@	IFEQ
+    //@	 JMP MN.SLT
+    //@	ENDIF
 
-    // ;  housekeeping, at least every 6x16 milliseconds.
-    // MN.HOU:
-    // 	STA HW.WDC		; prevent watchdog reset
-    // 	JSR EEACC1		;  coin stats
+    //@;  housekeeping, at least every 6x16 milliseconds.
+    //@MN.HOU:
+    //@	STA HW.WDC		; prevent watchdog reset
+    //@	JSR EEACC1		;  coin stats
     return true;
 }
 
 //CL.PR
 fn set_bitmap_values_of_faces(face: u8, game_state: *GameState) void {
-    // EOR #80
-    // ORA #0F
-    // AND #8F
+    //@EOR #80
+    //@ORA #0F
+    //@AND #8F
 
     var face_tmp = ((face ^ 0x80) | 0x0F) & 0x8F;
     //LDY #7
     var i: isize = 7;
-    // BEGIN
+    //@BEGIN
     while (i > 0) : (i -= 1) {
-        //  SUB #10
+        //@ SUB #10
         face_tmp -%= 0x10;
-        //  STA FC.BV-1(Y)
+        //@ STA FC.BV-1(Y)
         game_state.face_color_values[@intCast(i - 1)] = face_tmp;
-        //  DEY
-        // EQEND
+        //@ DEY
+        //@EQEND
 
     }
 }
@@ -2025,209 +2820,209 @@ fn color_value_to_color(color_value: u8) Color {
         0xC, 0x4, 0 => .Black,
         0xD => .Red,
         else => unreachable,
-        // 0...0x9 => .White,
-        // 0xA...0xC => .Gray,
-        // else => .Black,
+        //@0...0x9 => .White,
+        //@0xA...0xC => .Gray,
+        //@else => .Black,
     };
 }
 
-// ;------------------------------------
-// ;  routine to determine edge switches
-// BL.EDT
+//@;------------------------------------
+//@;  routine to determine edge switches
+//@BL.EDT
 fn determine_edge_switches(game_state: *GameState) void {
     const wave_data = game_state.current_wave_data;
     const adl = game_state.castle_adl;
 
-    //  LDY #0
-    // 	JSR BL.URC
+    //@ LDY #0
+    //@	JSR BL.URC
     game_state.castle_block_is_upper_right_edge_hidden =
         wave_data[adl] != wave_data[game_state.castle_arl];
 
-    // 	JSR BL.ULC
+    //@	JSR BL.ULC
     game_state.castle_block_is_upper_left_edge_hidden =
         wave_data[adl] != wave_data[game_state.castle_all];
-    // 	BIT BL.URE
-    // 	BMI 10$
-    // 	BIT BL.ULE
-    // 	BMI 10$
+    //@	BIT BL.URE
+    //@	BMI 10$
+    //@	BIT BL.ULE
+    //@	BMI 10$
     if (!game_state.castle_block_is_upper_right_edge_hidden and
         !game_state.castle_block_is_upper_left_edge_hidden)
     {
-        // 	JSR BL.UCC
+        //@	JSR BL.UCC
         game_state.castle_block_is_upper_corner_hidden =
             wave_data[adl] != wave_data[game_state.castle_acl];
-        // 	JMP 20$
+        //@	JMP 20$
     } else {
-        // 10$:	TRAI 0FF BL.UCR
+        //@10$:	TRAI 0FF BL.UCR
         game_state.castle_block_is_upper_corner_hidden = true;
     }
-    // 20$:
-    // 	JSR BL.HRC
+    //@20$:
+    //@	JSR BL.HRC
     calculate_hidden_right_line(game_state);
 
-    // 	JSR BL.HLC
+    //@	JSR BL.HLC
     calculate_hidden_left_line(game_state);
 
-    // 	INC16 CT.ACL
+    //@	INC16 CT.ACL
     game_state.castle_acl += 1;
-    // 	INC16 CT.ARL
+    //@	INC16 CT.ARL
     game_state.castle_arl += 1;
-    // 	INC16 CT.AFL
+    //@	INC16 CT.AFL
     game_state.castle_afl += 1;
-    // 	INC16 CT.ALL
+    //@	INC16 CT.ALL
     game_state.castle_all += 1;
 }
-// ;-----------------------------
-// ;  calculate right hidden line
-// ;  HES HEL start and length of hidden edge
-// BL.HRC:
+//@;-----------------------------
+//@;  calculate right hidden line
+//@;  HES HEL start and length of hidden edge
+//@BL.HRC:
 fn calculate_hidden_right_line(game_state: *GameState) void {
     const wave_data = game_state.current_wave_data;
     const adl = game_state.castle_adl;
     const arl = game_state.castle_arl;
     const afl = game_state.castle_afl;
-    // 	LDA #0FF
-    // 	STA BL.HRE
+    //@	LDA #0FF
+    //@	STA BL.HRE
     game_state.castle_block_is_right_edge_hidden = true;
 
-    // 	CMPIN CT.ADL,CT.ARL
-    // 	BCC 10$
+    //@	CMPIN CT.ADL,CT.ARL
+    //@	BCC 10$
     if (wave_data[adl] < wave_data[arl]) {
-        // 10$:	CMPIN CT.ADL,CT.AFL
-        // 	BCS 30$
+        //@10$:	CMPIN CT.ADL,CT.AFL
+        //@	BCS 30$
         if (wave_data[adl] >= wave_data[afl]) {
-            // 30$:	TRAM @CT.AFL(Y) BL.HES	; cases 3 and 5
-            // 	INC BL.HES
+            //@30$:	TRAM @CT.AFL(Y) BL.HES	; cases 3 and 5
+            //@	INC BL.HES
             game_state.castle_block_hidden_edge_start =
                 wave_data[afl] + 1;
 
-            // 	TRAM FC.BV1 FC.COH
+            //@	TRAM FC.BV1 FC.COH
             game_state.face_hidden_edge_color_value =
                 game_state.face_color_values[2];
-            // 	LDA NY,CT.ADL
-            // 35$:
-            // 	SUB @CT.AFL(Y)
-            // 	JMP 25$
-            // 25$:	STA BL.HEL
-            // 	DEC BL.HEL
-            // 	BMI 5$
-            // 	DEC BL.HEL
-            // 	BMI 5$
+            //@	LDA NY,CT.ADL
+            //@35$:
+            //@	SUB @CT.AFL(Y)
+            //@	JMP 25$
+            //@25$:	STA BL.HEL
+            //@	DEC BL.HEL
+            //@	BMI 5$
+            //@	DEC BL.HEL
+            //@	BMI 5$
             game_state.castle_block_hidden_right_edge_length =
                 @as(isize, @intCast(wave_data[adl])) -
                 @as(isize, @intCast(wave_data[afl])) - 2;
             if (game_state.castle_block_hidden_right_edge_length < 0) {
-                // 5$:	LDA #0
-                // 	STA BL.HRE
+                //@5$:	LDA #0
+                //@	STA BL.HRE
                 game_state.castle_block_is_right_edge_hidden = false;
             }
         }
-        // 	BCC 5$		; BRA
+        //@	BCC 5$		; BRA
         else {
-            // 5$:	LDA #0
-            // 	STA BL.HRE
+            //@5$:	LDA #0
+            //@	STA BL.HRE
             game_state.castle_block_is_right_edge_hidden = false;
         }
         return;
     }
-    // 	CMPIN CT.AFL,CT.ARL
-    // 	BCC 30$
+    //@	CMPIN CT.AFL,CT.ARL
+    //@	BCC 30$
     if (wave_data[afl] < wave_data[arl]) {
-        // 30$:	TRAM @CT.AFL(Y) BL.HES	; cases 3 and 5
-        // 	INC BL.HES
+        //@30$:	TRAM @CT.AFL(Y) BL.HES	; cases 3 and 5
+        //@	INC BL.HES
         game_state.castle_block_hidden_edge_start =
             wave_data[afl] + 1;
 
-        // 	TRAM FC.BV1 FC.COH
+        //@	TRAM FC.BV1 FC.COH
         game_state.face_hidden_edge_color_value =
             game_state.face_color_values[2];
-        // 	LDA NY,CT.ADL
-        // 35$:
-        // 	SUB @CT.AFL(Y)
-        // 	JMP 25$
-        // 25$:	STA BL.HEL
-        // 	DEC BL.HEL
-        // 	BMI 5$
-        // 	DEC BL.HEL
-        // 	BMI 5$
+        //@	LDA NY,CT.ADL
+        //@35$:
+        //@	SUB @CT.AFL(Y)
+        //@	JMP 25$
+        //@25$:	STA BL.HEL
+        //@	DEC BL.HEL
+        //@	BMI 5$
+        //@	DEC BL.HEL
+        //@	BMI 5$
         game_state.castle_block_hidden_right_edge_length =
             wave_data[adl] - wave_data[afl] - 2;
 
-        // 	BMI 5$
+        //@	BMI 5$
         if (game_state.castle_block_hidden_right_edge_length < 0) {
-            // 5$:	LDA #0
-            // 	STA BL.HRE
+            //@5$:	LDA #0
+            //@	STA BL.HRE
             game_state.castle_block_is_right_edge_hidden = false;
         }
-        // 	RTS
+        //@	RTS
         return;
     }
     game_state.castle_block_is_right_edge_hidden = false;
 
     //NOTE: this should all be implmented above
-    // 	LDA #0FF
-    // 	STA BL.HRE
-    // 	CMPIN CT.ADL,CT.ARL
-    // 	BCC 10$
+    //@	LDA #0FF
+    //@	STA BL.HRE
+    //@	CMPIN CT.ADL,CT.ARL
+    //@	BCC 10$
 
-    // 	CMPIN CT.AFL,CT.ARL
-    // 	BCC 30$
-    // ; cases 4 and 6,  no erase
-    // 5$:	LDA #0
-    // 	STA BL.HRE
-    // 	RTS
+    //@	CMPIN CT.AFL,CT.ARL
+    //@	BCC 30$
+    //@; cases 4 and 6,  no erase
+    //@5$:	LDA #0
+    //@	STA BL.HRE
+    //@	RTS
 
-    // 10$:	CMPIN CT.ADL,CT.AFL
-    // 	BCS 30$
-    // 	BCC 5$		; BRA
-    // 			; cases 1 and 2 used to be here
-    // 25$:	STA BL.HEL
-    // 	BMI 5$
-    // 	DEC BL.HEL
-    // 	BMI 5$
-    // 	DEC BL.HEL
-    // 	BMI 5$
-    // 	RTS
+    //@10$:	CMPIN CT.ADL,CT.AFL
+    //@	BCS 30$
+    //@	BCC 5$		; BRA
+    //@			; cases 1 and 2 used to be here
+    //@25$:	STA BL.HEL
+    //@	BMI 5$
+    //@	DEC BL.HEL
+    //@	BMI 5$
+    //@	DEC BL.HEL
+    //@	BMI 5$
+    //@	RTS
 
-    // 30$:	TRAM @CT.AFL(Y) BL.HES	; cases 3 and 5
-    // 	INC BL.HES
-    // 	TRAM FC.BV1 FC.COH
-    // 	CMPIN CT.ARL,CT.ADL
-    // 	BCC 35$
-    // 	LDA NY,CT.ADL
-    // 35$:
-    // 	SUB @CT.AFL(Y)
-    // 	JMP 25$
+    //@30$:	TRAM @CT.AFL(Y) BL.HES	; cases 3 and 5
+    //@	INC BL.HES
+    //@	TRAM FC.BV1 FC.COH
+    //@	CMPIN CT.ARL,CT.ADL
+    //@	BCC 35$
+    //@	LDA NY,CT.ADL
+    //@35$:
+    //@	SUB @CT.AFL(Y)
+    //@	JMP 25$
 }
-// ;---------------------------
-// ; calculate left hidden line
-// BL.HLC:
+//@;---------------------------
+//@; calculate left hidden line
+//@BL.HLC:
 fn calculate_hidden_left_line(game_state: *GameState) void {
     const wave_data = game_state.current_wave_data;
     const adl = game_state.castle_adl;
     const all = game_state.castle_all;
     //	LDA #0FF
-    // 	STA BL.HLE
+    //@	STA BL.HLE
     game_state.castle_block_is_left_edge_hidden = true;
 
-    // 	CMPIN CT.ADL,CT.ALL
-    // 	BCC 10$		; erase line to min of ALL,ADL
-    // 	LDA NY,CT.ALL
-    // 10$:	STA BL.HLL
-    // 	BEQ 40$
-    // 	DEC BL.HLL
-    // 	BEQ 40$
-    // 	DEC BL.HLL
-    // 	BEQ 40$
+    //@	CMPIN CT.ADL,CT.ALL
+    //@	BCC 10$		; erase line to min of ALL,ADL
+    //@	LDA NY,CT.ALL
+    //@10$:	STA BL.HLL
+    //@	BEQ 40$
+    //@	DEC BL.HLL
+    //@	BEQ 40$
+    //@	DEC BL.HLL
+    //@	BEQ 40$
     game_state.castle_block_hidden_left_edge_length =
         @min(wave_data[adl], wave_data[all]);
 
-    // 	RTS
+    //@	RTS
 
-    // 40$:	LDA #0
-    // 	STA BL.HLE
+    //@40$:	LDA #0
+    //@	STA BL.HLE
 
-    // 	RTS
+    //@	RTS
     if (game_state.castle_block_hidden_left_edge_length - 2 <= 0) {
         game_state.castle_block_is_left_edge_hidden = false;
     } else {
@@ -2236,18 +3031,18 @@ fn calculate_hidden_left_line(game_state: *GameState) void {
 }
 //FACE1:
 fn draw_face1(game_state: *GameState) void {
-    // TRAM FC.HST LN.HCR
-    // TRAM FC.V1S LN.VCR
+    //@TRAM FC.HST LN.HCR
+    //@TRAM FC.V1S LN.VCR
     var line_position = V2{
         game_state.face_position[0],
         game_state.face_v1s,
     };
-    // TRAM FC.BV1 LN.CO1
+    //@TRAM FC.BV1 LN.CO1
     var color = color_value_to_color(game_state.face_color_values[2]);
-    // TRAM FC.V1N CURLIN
+    //@TRAM FC.V1N CURLIN
     var current_line = game_state.face_v1n;
     while (true) {
-        // JSR LN.F1
+        //@JSR LN.F1
         add_draw_line_command(
             .Line1,
             color,
@@ -2255,23 +3050,23 @@ fn draw_face1(game_state: *GameState) void {
             line_position,
             game_state,
         );
-        // DEC CURLIN
+        //@DEC CURLIN
         current_line -= 1;
-        // BMI 20$
+        //@BMI 20$
         if (current_line < 0) {
             break;
         }
-        // DEC LN.VCR
+        //@DEC LN.VCR
         line_position -= .{ 0, 1 };
     }
     //draw border
-    //     BORDR1:
+    //@    BORDR1:
     {
-        //  TRAM FC.BVB LN.CO1	; upper edge
-        // 	STA LN.CO3
+        //@ TRAM FC.BVB LN.CO1	; upper edge
+        //@	STA LN.CO3
         const border_color_value = game_state.face_color_values[3];
         color = color_value_to_color(border_color_value);
-        // 	JSR LN.F1
+        //@	JSR LN.F1
         add_draw_line_command(
             .Line1,
             color,
@@ -2280,9 +3075,9 @@ fn draw_face1(game_state: *GameState) void {
             game_state,
         );
 
-        // 	TRAM FC.VST LN.VCR	; lower edge
+        //@	TRAM FC.VST LN.VCR	; lower edge
         line_position[1] = game_state.face_position[1];
-        // 	JSR LN.F1
+        //@	JSR LN.F1
         add_draw_line_command(
             .Line1,
             color,
@@ -2291,18 +3086,18 @@ fn draw_face1(game_state: *GameState) void {
             game_state,
         );
 
-        // 	TRAM FC.V1N LN.LG3
-        // 	LDA FC.HST		; right edge
-        // 	ADD #CT.XSZ
-        // 	STA LN.HCR
+        //@	TRAM FC.V1N LN.LG3
+        //@	LDA FC.HST		; right edge
+        //@	ADD #CT.XSZ
+        //@	STA LN.HCR
 
-        // 	LDA FC.V1S
-        // 	SUB #CT.XSZ
-        // 	STA LN.VCR
+        //@	LDA FC.V1S
+        //@	SUB #CT.XSZ
+        //@	STA LN.VCR
         line_position = .{
             game_state.face_position[0] + 4, game_state.face_v1s - 4,
         };
-        // 	JSR LN.3
+        //@	JSR LN.3
         add_draw_line_command(
             .Line3,
             color,
@@ -2311,28 +3106,28 @@ fn draw_face1(game_state: *GameState) void {
             game_state,
         );
 
-        // ;  hidden edge
-        // 	BIT BL.HRE
-        // 	IFMI
+        //@;  hidden edge
+        //@	BIT BL.HRE
+        //@	IFMI
 
-        // 	 LDA FC.V1N
-        // 	 IFNE
+        //@	 LDA FC.V1N
+        //@	 IFNE
 
         if (game_state.castle_block_is_right_edge_hidden and
             game_state.face_v1n != 0)
         {
-            // 	  TRAM BL.HEL LN.LG3
-            // 	  TRAM FC.COH LN.CO3
+            //@	  TRAM BL.HEL LN.LG3
+            //@	  TRAM FC.COH LN.CO3
 
-            // 	  LDA FC.VST
-            // 	  SUB #CT.XSZ
-            // 	  SUB BL.HES
-            //    STA LN.VCR
+            //@	  LDA FC.VST
+            //@	  SUB #CT.XSZ
+            //@	  SUB BL.HES
+            //@   STA LN.VCR
             line_position[1] =
                 game_state.face_position[1] - 4 - game_state.castle_block_hidden_edge_start;
 
             const hidden_edge_color = color_value_to_color(game_state.face_hidden_edge_color_value);
-            // 	  JSR LN.3
+            //@	  JSR LN.3
             add_draw_line_command(
                 .Line3,
                 hidden_edge_color,
@@ -2341,25 +3136,25 @@ fn draw_face1(game_state: *GameState) void {
                 game_state,
             );
         }
-        // 	 ENDIF
-        // 	ENDIF
+        //@	 ENDIF
+        //@	ENDIF
     }
 }
 //FACE2:
 fn draw_face2(game_state: *GameState) void {
-    //  TRAM FC.HST LN.HCR
-    // 	TRAM FC.V2S LN.VCR
+    //@ TRAM FC.HST LN.HCR
+    //@	TRAM FC.V2S LN.VCR
     var line_position = V2{
         game_state.face_position[0],
         game_state.face_v2s,
     };
-    // 	TRAM FC.BV2 LN.CO2
+    //@	TRAM FC.BV2 LN.CO2
     var color = color_value_to_color(game_state.face_color_values[1]);
-    // 	TRAM FC.V2N CURLIN
+    //@	TRAM FC.V2N CURLIN
     var current_line = game_state.face_v2n;
 
     while (true) {
-        // 10$:	JSR LN.F2
+        //@10$:	JSR LN.F2
         add_draw_line_command(
             .Line2,
             color,
@@ -2367,25 +3162,25 @@ fn draw_face2(game_state: *GameState) void {
             line_position,
             game_state,
         );
-        // 	DEC CURLIN
+        //@	DEC CURLIN
         current_line -= 1;
-        // 	BMI 20$
+        //@	BMI 20$
         if (current_line < 0) {
             break;
         }
-        // 	DEC LN.VCR
+        //@	DEC LN.VCR
         line_position -= .{ 0, 1 };
-        // 	JMP 10$
+        //@	JMP 10$
     }
-    // 20$:	JSR BORDR2
+    //@20$:	JSR BORDR2
 
     //BORDR2:
     {
-        //  TRAM FC.BVB LN.CO2	; upper line
-        // 	STA LN.CO3
+        //@ TRAM FC.BVB LN.CO2	; upper line
+        //@	STA LN.CO3
         const border_color_value = game_state.face_color_values[3];
         color = color_value_to_color(border_color_value);
-        // 	JSR LN.F2
+        //@	JSR LN.F2
         add_draw_line_command(
             .Line2,
             color,
@@ -2394,9 +3189,9 @@ fn draw_face2(game_state: *GameState) void {
             game_state,
         );
 
-        // 	TRAM FC.V2S LN.VCR	; lower line
+        //@	TRAM FC.V2S LN.VCR	; lower line
         line_position[1] = game_state.face_v2s;
-        // 	JSR LN.F2
+        //@	JSR LN.F2
         add_draw_line_command(
             .Line2,
             color,
@@ -2405,11 +3200,11 @@ fn draw_face2(game_state: *GameState) void {
             game_state,
         );
 
-        // 	TRAM FC.V2S LN.VCR
+        //@	TRAM FC.V2S LN.VCR
         line_position[1] = game_state.face_v2s;
-        // 	TRAM FC.V2N LN.LG3	; right vertical line
+        //@	TRAM FC.V2N LN.LG3	; right vertical line
         const number_of_segments = game_state.face_v2n;
-        // 	JSR LN.3
+        //@	JSR LN.3
         add_draw_line_command(
             .Line3,
             color,
@@ -2418,17 +3213,17 @@ fn draw_face2(game_state: *GameState) void {
             game_state,
         );
 
-        // 	LDA FC.HST	; left vertical line
-        // 	SUB #CT.YSZ
-        // 	STA LN.HCR
-        // 	LDA LN.VCR
-        // 	SUB #CT.YSZ/4
-        // 	STA LN.VCR
+        //@	LDA FC.HST	; left vertical line
+        //@	SUB #CT.YSZ
+        //@	STA LN.HCR
+        //@	LDA LN.VCR
+        //@	SUB #CT.YSZ/4
+        //@	STA LN.VCR
         line_position = .{
             game_state.face_position[0] - 8,
             line_position[1] - 2,
         };
-        // 	JSR LN.3
+        //@	JSR LN.3
         add_draw_line_command(
             .Line3,
             color,
@@ -2437,24 +3232,24 @@ fn draw_face2(game_state: *GameState) void {
             game_state,
         );
 
-        // ;  hidden edge
-        // 	BIT BL.HLE
-        // 	IFMI
-        // 	 LDA FC.V2N
-        // 	 IFNE
+        //@;  hidden edge
+        //@	BIT BL.HLE
+        //@	IFMI
+        //@	 LDA FC.V2N
+        //@	 IFNE
 
         if (game_state.castle_block_is_left_edge_hidden and
             game_state.face_v2n != 0)
         {
-            // 	  LDA FC.VST
-            // 	  SUB #CT.YSZ/4
-            // 	  STA LN.VCR
-            // 	  DEC LN.VCR
+            //@	  LDA FC.VST
+            //@	  SUB #CT.YSZ/4
+            //@	  STA LN.VCR
+            //@	  DEC LN.VCR
             line_position[1] = game_state.face_position[1] - 2 - 1;
-            // 	  TRAM FC.BV2 LN.CO3
+            //@	  TRAM FC.BV2 LN.CO3
             color = color_value_to_color(game_state.face_color_values[1]);
-            // 	  TRAM BL.HLL LN.LG3
-            // 	  JSR LN.3
+            //@	  TRAM BL.HLL LN.LG3
+            //@	  JSR LN.3
             add_draw_line_command(
                 .Line3,
                 color,
@@ -2463,27 +3258,27 @@ fn draw_face2(game_state: *GameState) void {
                 game_state,
             );
         }
-        // 	 ENDIF
-        // 	ENDIF
-        // 	RTS
+        //@	 ENDIF
+        //@	ENDIF
+        //@	RTS
 
     }
 }
 //FACE3:
 fn draw_face3(game_state: *GameState) void {
-    //  TRAI CT.XSZ LN.LG1
+    //@ TRAI CT.XSZ LN.LG1
     var number_of_line_1_segments: isize = 4;
-    // 	TRAI CT.YSZ CURLIN
+    //@	TRAI CT.YSZ CURLIN
     var number_of_lines: isize = 8;
-    // 	TRAM FC.HST LN.HCR
-    // 	TRAM FC.VST LN.VCR
+    //@	TRAM FC.HST LN.HCR
+    //@	TRAM FC.VST LN.VCR
     var line_position = game_state.face_position;
-    // 	TRAM CT.BV3 LN.CO1
+    //@	TRAM CT.BV3 LN.CO1
     var line_1_color = color_value_to_color(game_state.face_color_values[0]);
 
-    // 10$:
+    //@10$:
     while (true) {
-        // JSR LN.F1
+        //@JSR LN.F1
         add_draw_line_command(
             .Line1,
             line_1_color,
@@ -2491,17 +3286,17 @@ fn draw_face3(game_state: *GameState) void {
             line_position,
             game_state,
         );
-        // 	DEC CURLIN
+        //@	DEC CURLIN
         number_of_lines -= 1;
 
-        // 	BMI 20$
+        //@	BMI 20$
         if (number_of_lines < 0) {
             break;
         }
-        // 	DEC LN.HCR
+        //@	DEC LN.HCR
         line_position[0] -= 1;
 
-        // 	JSR LN.F1
+        //@	JSR LN.F1
         add_draw_line_command(
             .Line1,
             line_1_color,
@@ -2510,16 +3305,16 @@ fn draw_face3(game_state: *GameState) void {
             game_state,
         );
 
-        // 	DEC CURLIN
+        //@	DEC CURLIN
         number_of_lines -= 1;
-        // 	BMI 20$
+        //@	BMI 20$
         if (number_of_lines < 0) {
             break;
         }
-        // 	DEC LN.HCR
+        //@	DEC LN.HCR
         line_position[0] -= 1;
 
-        // 	JSR LN.F1
+        //@	JSR LN.F1
         add_draw_line_command(
             .Line1,
             line_1_color,
@@ -2527,20 +3322,20 @@ fn draw_face3(game_state: *GameState) void {
             line_position,
             game_state,
         );
-        // 	DEC CURLIN
+        //@	DEC CURLIN
         number_of_lines -= 1;
-        // 	BMI 20$
+        //@	BMI 20$
         if (number_of_lines < 0) {
             break;
         }
 
-        // 	DEC LN.VCR
+        //@	DEC LN.VCR
         line_position[1] -= 1;
 
-        // 	DEC LN.LG1
+        //@	DEC LN.LG1
         number_of_line_1_segments -= 1;
 
-        // 	JSR LN.1
+        //@	JSR LN.1
         add_draw_line_command(
             .Line1,
             line_1_color,
@@ -2548,13 +3343,13 @@ fn draw_face3(game_state: *GameState) void {
             line_position,
             game_state,
         );
-        // 	INC LN.LG1
+        //@	INC LN.LG1
         number_of_line_1_segments += 1;
 
-        // 	DEC LN.HCR
+        //@	DEC LN.HCR
         line_position[0] -= 1;
 
-        // 	JSR LN.F1
+        //@	JSR LN.F1
         add_draw_line_command(
             .Line1,
             line_1_color,
@@ -2562,28 +3357,28 @@ fn draw_face3(game_state: *GameState) void {
             line_position,
             game_state,
         );
-        // 	DEC CURLIN
+        //@	DEC CURLIN
         number_of_lines -= 1;
-        // 	BMI 20$
+        //@	BMI 20$
         if (number_of_lines < 0) {
             break;
         }
-        // 	DEC LN.HCR
+        //@	DEC LN.HCR
         line_position[0] -= 1;
 
-        // 	JMP 10$
+        //@	JMP 10$
     }
-    // 20$:	JSR BORDR3
+    //@20$:	JSR BORDR3
     //BORDR3:
     {
-        //  TRAM FC.BVB LN.CO1	; upper left edge
+        //@ TRAM FC.BVB LN.CO1	; upper left edge
         line_1_color = color_value_to_color(game_state.face_color_values[3]);
-        // 	STA LN.CO2
+        //@	STA LN.CO2
         const line_2_color = line_1_color;
-        // 	BIT BL.ULE
-        // 	IFMI
+        //@	BIT BL.ULE
+        //@	IFMI
         if (game_state.castle_block_is_upper_left_edge_hidden) {
-            // 	 JSR LN.F1
+            //@	 JSR LN.F1
             add_draw_line_command(
                 .Line1,
                 line_1_color,
@@ -2592,14 +3387,14 @@ fn draw_face3(game_state: *GameState) void {
                 game_state,
             );
         }
-        // 	ELSE
+        //@	ELSE
         else {
-            // 			; delete extraneous line
-            // 	 TRAM CT.BV3 LN.CO1
+            //@			; delete extraneous line
+            //@	 TRAM CT.BV3 LN.CO1
             line_1_color = color_value_to_color(game_state.face_color_values[0]);
-            // 	 DEC LN.LG1
+            //@	 DEC LN.LG1
             number_of_line_1_segments -= 1;
-            // 	 JSR LN.1
+            //@	 JSR LN.1
             add_draw_line_command(
                 .Line1,
                 line_1_color,
@@ -2608,17 +3403,17 @@ fn draw_face3(game_state: *GameState) void {
                 game_state,
             );
 
-            // 	 INC LN.LG1
+            //@	 INC LN.LG1
             number_of_line_1_segments += 1;
-            // 	 TRAM FC.BVB LN.CO1
+            //@	 TRAM FC.BVB LN.CO1
             line_1_color = color_value_to_color(game_state.face_color_values[3]);
-            // 	ENDIF
+            //@	ENDIF
         }
 
-        // 	TRAM FC.HST LN.HCR	; lower right edge
-        // 	TRAM FC.VST LN.VCR
+        //@	TRAM FC.HST LN.HCR	; lower right edge
+        //@	TRAM FC.VST LN.VCR
         line_position = game_state.face_position;
-        // 	JSR LN.F1
+        //@	JSR LN.F1
         add_draw_line_command(
             .Line1,
             line_1_color,
@@ -2627,8 +3422,8 @@ fn draw_face3(game_state: *GameState) void {
             game_state,
         );
 
-        // 				; lower left edge
-        // 	JSR LN.F2
+        //@				; lower left edge
+        //@	JSR LN.F2
         add_draw_line_command(
             .Line2,
             line_2_color,
@@ -2637,17 +3432,17 @@ fn draw_face3(game_state: *GameState) void {
             game_state,
         );
 
-        // 	LDA FC.HST	; upper right edge
-        // 	ADD #CT.XSZ
-        // 	STA LN.HCR
-        // 	LDA FC.VST
-        // 	SUB #CT.XSZ
-        // 	STA LN.VCR
+        //@	LDA FC.HST	; upper right edge
+        //@	ADD #CT.XSZ
+        //@	STA LN.HCR
+        //@	LDA FC.VST
+        //@	SUB #CT.XSZ
+        //@	STA LN.VCR
         line_position = game_state.face_position + V2{ 4, -4 };
-        // 	BIT BL.URE
-        // 	IFMI
+        //@	BIT BL.URE
+        //@	IFMI
         if (game_state.castle_block_is_upper_right_edge_hidden) {
-            // 	 JSR LN.F2
+            //@	 JSR LN.F2
             add_draw_line_command(
                 .Line2,
                 line_2_color,
@@ -2655,30 +3450,30 @@ fn draw_face3(game_state: *GameState) void {
                 line_position,
                 game_state,
             );
-            // 	ENDIF
+            //@	ENDIF
         }
-        // ;  upper corner pixel
-        // 	BIT BL.UCR
-        // 	IFMI
+        //@;  upper corner pixel
+        //@	BIT BL.UCR
+        //@	IFMI
         if (game_state.castle_block_is_upper_corner_hidden) {
-            // 	 LDA LN.HCR
-            // 	 SUB #CT.YSZ
-            // 	 STA XB
-            // 	 DEC LN.VCR
-            // 	 DEC LN.VCR
+            //@	 LDA LN.HCR
+            //@	 SUB #CT.YSZ
+            //@	 STA XB
+            //@	 DEC LN.VCR
+            //@	 DEC LN.VCR
             line_position[1] -= 2;
-            // 	 TRAM LN.VCR YB
+            //@	 TRAM LN.VCR YB
             const pixel_position = line_position - V2{ 8, 0 };
-            // 	 TRAM FC.BVB VB
+            //@	 TRAM FC.BVB VB
             add_draw_pixel_command(
                 line_2_color,
                 pixel_position,
                 game_state,
             );
         }
-        // 	ENDIF
+        //@	ENDIF
     }
-    // 	RTS
+    //@	RTS
 }
 fn draw_tunnel(game_state: *GameState) void {
     _ = game_state;

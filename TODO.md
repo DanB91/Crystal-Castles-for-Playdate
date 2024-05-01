@@ -1,0 +1,3 @@
+- Walk through entity init loop as is.  May be print out  some debug info
+- Finish crystal_castles.zig:1355
+- We probablty want to write some tool to fastforward gamestates.
