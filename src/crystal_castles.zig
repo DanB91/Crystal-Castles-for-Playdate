@@ -630,10 +630,11 @@ pub const GameState = struct {
     rng_state: toolbox.RandomState,
 
     current_state: enum {
-        DrawBackgroundAndCastle, //GM.AT0
-        AttractModeMainLoop,
-        StartGame,
-        StartOfWave,
+        DrawBackgroundAndCastle, //GM.IN -- GM.STA is set to 0
+        AttractModeMainLoop, //GM.AT -- GM.STA is set to 0xF
+        StartGame, //GM.ST -- GM.STA is set to 1
+        StartOfWave, //GM.SW -- GM.STA is set to 2
+        InitWaveMotionObjects, //GM.WO -- GM.STA is set to 0xA
     } = .DrawBackgroundAndCastle,
 
     is_in_attract_mode: bool = false, //ATRACT
@@ -745,6 +746,8 @@ pub const GameState = struct {
 
     general_start_delay: isize = 0, //EN.GDL
 
+    gem_count: isize = 0, //CE.COC
+
     tune_table_keys: [4]isize =
         .{ 0, 0, 0, 0 }, //RS.KEY
 
@@ -848,8 +851,12 @@ pub fn update(game_state: *GameState) void {
         }
         advance_castle_row(game_state);
     }
-
+    //@ ;---  state 15 attract mode
+    //@ GM.AT0:
     {
+        //@ TRAI 0F GM.STA
+        game_state.current_state = .AttractModeMainLoop;
+
         //@JSR AL.BER
         erase_board(game_state);
         //@LDA #10
@@ -877,7 +884,6 @@ pub fn update(game_state: *GameState) void {
         //@ENDIF
         //@STA 1+MN.DEL
 
-        game_state.current_state = .AttractModeMainLoop;
     }
 
     while (game_state.current_state == .AttractModeMainLoop) {
@@ -907,8 +913,36 @@ pub fn update(game_state: *GameState) void {
         //@ 	JSR MN.FRA
         frame_handler(game_state);
 
-        //************TODO**************
-        //@ 	JSR CT.GDR		; draw a row of gems
+        //@ 	JSR 		; draw a row of gems
+        {
+            //@;--------------------
+            //@;  draw a row of gems
+            //@CT.GDR:
+            //@	LDA FRAME
+            //@	AND #1
+            //@	IFEQ
+            if (game_state.frame & 1 == 0) {
+                //@	JSR CT.GRD
+                draw_gem_row(game_state);
+
+                //@	DEC CT.CNT
+                game_state.castle_row_count -= 1;
+                //@	IFPL
+                if (game_state.castle_row_count >= 0) {
+                    //@	JSR CR.ADV
+                    advance_castle_row(game_state);
+                    //@	RTS
+                } else {
+                    //@	JSR GM.WO0	; done, so go to next game state
+                    game_state.current_state = .InitWaveMotionObjects;
+
+                    //@	ENDIF
+                }
+
+                //@	ENDIF
+            }
+            //@	RTS
+        }
 
         //@ 	JMP GM.ENL
         next_frame(game_state);
@@ -916,6 +950,11 @@ pub fn update(game_state: *GameState) void {
     while (true) {
         next_frame(game_state);
     }
+}
+
+fn draw_gem_row(game_state: *GameState) void {
+    //************TODO**************
+    _ = game_state;
 }
 
 //;  ----- state 2: start of wave
@@ -1011,8 +1050,15 @@ fn start_of_wave(game_state: *GameState) void {
     }
     //@	JSR EN.INI		; reinit entities
     init_entities(game_state);
-    //*******TODO******
     //@	JSR CT.GIN		; init for gem drawing
+    //@ ;-----------------------
+    //@ ;  init for drawing gems
+    //@ CT.GIN:
+    //@ 	TR16AI 0 CE.COC
+    game_state.gem_count = 0;
+    //@ 	JSR CR.INI
+    initialize_castle_row(game_state);
+    //@ 	RTS
 }
 //@WV.BMV:
 //@; loop to move to destination

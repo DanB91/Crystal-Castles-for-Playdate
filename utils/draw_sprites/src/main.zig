@@ -57,7 +57,7 @@ fn test_in_terminal() void {
     const SCREEN_W = 16;
     const SCREEN_H = 32;
     //const motion_object = 0;
-    for (0x4..0x5) |motion_object| {
+    for (0x1..0x2) |motion_object| {
         var screen = [_]u32{0} ** (SCREEN_H * SCREEN_W);
         var xpos: usize = 0;
         var ypos: usize = 0;
