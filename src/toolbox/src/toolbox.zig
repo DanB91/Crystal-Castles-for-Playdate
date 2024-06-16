@@ -17,6 +17,7 @@ pub usingnamespace @import("atomic.zig");
 pub usingnamespace @import("bit_flags.zig");
 pub usingnamespace @import("panic.zig");
 
+pub const fiber = @import("fiber.zig");
 pub const profiler = @import("profiler.zig");
 
 const builtin = @import("builtin");
@@ -39,7 +40,10 @@ pub const Platform = enum {
 pub const THIS_PLATFORM = if (@hasDecl(root, "THIS_PLATFORM"))
     root.THIS_PLATFORM
 else switch (builtin.os.tag) {
-    .macos => Platform.MacOS,
+    .macos => if (builtin.cpu.arch == .aarch64)
+        Platform.MacOS
+    else
+        @compileError("Intel macOS not supported!"),
     .wasi => Platform.WASM,
     else => @compileError("Please define the THIS_PLATFORM constant in the root source file"),
 };

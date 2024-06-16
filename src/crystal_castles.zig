@@ -1,4 +1,5 @@
 const toolbox = @import("toolbox");
+const fiber = toolbox.fiber;
 const std = @import("std");
 
 pub const SCREEN_WIDTH = 256;
@@ -608,21 +609,32 @@ const DrawCommand = struct {
     };
 };
 
+//AKA Sprite
+pub const MotionObject = struct {
+    picture_number: isize = 0,
+    position: V2 = ZV2,
+    flags: usize = 0,
+};
+
 pub const GameState = struct {
+    //input from platform layer:
+    dt: toolbox.Duration,
+
+    //output to platform layer:
+    motion_objects: [MAX_NUMBER_OF_ENTITIES * MOTION_OBJECTS_PER_ENTITY]MotionObject =
+        [_]MotionObject{.{}} ** (MAX_NUMBER_OF_ENTITIES * MOTION_OBJECTS_PER_ENTITY),
     draw_command_queue: toolbox.RingQueue(DrawCommand),
+    number_of_draw_commands_this_frame: usize = 0,
+
     global_arena: *toolbox.Arena,
     rng_state: toolbox.RandomState,
 
     current_state: enum {
-        //NOTE: GM.AT0 is spread across DrawBackground, DrawCastle, DrawCastleRow, and DrawCreditsInserted
-        DrawBackground,
-        DrawCastle,
-        DrawCastleRow,
-        DrawCreditsInserted,
+        DrawBackgroundAndCastle, //GM.AT0
         AttractModeMainLoop,
         StartGame,
         StartOfWave,
-    } = .DrawBackground,
+    } = .DrawBackgroundAndCastle,
 
     is_in_attract_mode: bool = false, //ATRACT
 
@@ -698,11 +710,21 @@ pub const GameState = struct {
     //TODO: figure out the different life mode states
     entity_life_mode: EntityField(isize) = z(EntityField(isize)), //EN.LMD
     //EN.XO1-EN.XO4, EN.YO1-EN.YO4
-    entity_motion_object_positions: EntityField([MOTION_OBJECTS_PER_ENTITY]V2) =
+    entity_motion_object_offsets: EntityField([MOTION_OBJECTS_PER_ENTITY]V2) =
         z(EntityField([MOTION_OBJECTS_PER_ENTITY]V2)),
     entity_state: EntityField(isize) = z(EntityField(isize)), //EN.STA
-    entity_position: EntityField(V2) = z(EntityField(V2)), //EN.MX and EN.MY
+    entity_playfield_position: EntityField(V2) = z(EntityField(V2)), //EN.MX and EN.MY
+    entity_position: EntityField(V2) = z(EntityField(V2)), //EN.X and EN.Y
+    entity_fine_position: EntityField(V2) = z(EntityField(V2)), //EN.IX and EN.IY
+    entity_picture_position: EntityField(V2) = z(EntityField(V2)), //EN.HP and EN.VP
+    //EN.PR1-EN.PR4
+    entity_priority: EntityField([MOTION_OBJECTS_PER_ENTITY]isize) =
+        z(EntityField([MOTION_OBJECTS_PER_ENTITY]isize)),
+    //EN.PC1-EN.PC4
+    entity_picture: EntityField([MOTION_OBJECTS_PER_ENTITY]isize) =
+        z(EntityField([MOTION_OBJECTS_PER_ENTITY]isize)),
     entity_height: EntityField(isize) = z(EntityField(isize)), //EN.HEI
+    entity_animation_direction: EntityField(isize) = z(EntityField(isize)), //EN.AND
     entity_playfield_offset: EntityField(usize) = z(EntityField(usize)), //EN.MAT
     //TODO figure out why we need to playfield offset fields
     entity_playfield_offset2: EntityField(usize) = z(EntityField(usize)), //EN.MA2
@@ -736,12 +758,6 @@ pub const GameState = struct {
     lives: isize = 0, //P1.LIV
     score: isize = 0, //P1.SCO
 
-    motion_objects_current: isize = 0,
-    motion_objects_previous: isize = 0,
-    motion_objects_selected_buffer: usize = 0,
-
-    motion_objects_buffers: [2][256]u8 = [_][256]u8{ [_]u8{0} ** 256, [_]u8{0} ** 256 },
-
     frame: isize = 0, //FRAME
     number_of_credits: isize = 0, //$$CRDT or $CNCT
     current_wave_data: [WAVE_DATA_SIZE]u8 = undefined, //CTRAM,
@@ -751,6 +767,8 @@ pub const GameState = struct {
     show_easter_egg: bool = false,
 
     scoreboard: Scoreboard = .{},
+
+    debug_should_not_yield: bool = false,
 
     fn EntityField(comptime T: type) type {
         return [MAX_NUMBER_OF_ENTITIES]T;
@@ -781,10 +799,11 @@ pub fn init(game_state: *GameState, global_arena: *toolbox.Arena) void {
     reset(game_state);
 }
 
-pub fn reset(game_state: *GameState) void {
+fn reset(game_state: *GameState) void {
     const draw_line_command_queue = game_state.draw_command_queue;
     const rand = toolbox.init_random(@bitCast(toolbox.now().microseconds()));
     game_state.* = .{
+        .dt = .{},
         .global_arena = game_state.global_arena,
         .draw_command_queue = draw_line_command_queue,
         .rng_state = rand,
@@ -795,106 +814,110 @@ pub fn reset(game_state: *GameState) void {
     initialize_high_scores();
     initialize_wave_data(game_state);
 }
+pub fn update(game_state: *GameState) void {
+    //NOTE: this differentiates from the original code since instead of drawing squares,
+    //      we just draw the background with a swipe effect
+    while (true) {
+        const BACKGROUND_ANIMATION_MS_PER_SCANLINE = 720 / SCREEN_HEIGHT;
+        if (game_state.background_clip_y >= SCREEN_HEIGHT) {
+            initialize_castle(game_state);
+            next_frame(game_state);
+            break;
+        }
+        game_state.background_animation_time_since_last_scanline.ticks += game_state.dt.ticks;
+        if (game_state.background_animation_time_since_last_scanline.milliseconds() >=
+            BACKGROUND_ANIMATION_MS_PER_SCANLINE)
+        {
+            game_state.background_clip_y +=
+                @divTrunc(
+                game_state.background_animation_time_since_last_scanline.milliseconds(),
+                BACKGROUND_ANIMATION_MS_PER_SCANLINE,
+            );
+            game_state.background_animation_time_since_last_scanline = .{};
+        }
+        next_frame(game_state);
+    }
 
-pub fn update(dt: toolbox.Duration, game_state: *GameState) void {
-    switch (game_state.current_state) {
-        .DrawBackground => {
-            const BACKGROUND_ANIMATION_MS_PER_SCANLINE = 720 / SCREEN_HEIGHT;
-            if (game_state.background_clip_y >= SCREEN_HEIGHT) {
-                initialize_castle(game_state);
-                game_state.current_state = .DrawCastle;
-                return;
-            }
-            game_state.background_animation_time_since_last_scanline.ticks += dt.ticks;
-            if (game_state.background_animation_time_since_last_scanline.milliseconds() >=
-                BACKGROUND_ANIMATION_MS_PER_SCANLINE)
-            {
-                game_state.background_clip_y +=
-                    @divTrunc(
-                    game_state.background_animation_time_since_last_scanline.milliseconds(),
-                    BACKGROUND_ANIMATION_MS_PER_SCANLINE,
-                );
-                game_state.background_animation_time_since_last_scanline = .{};
-            }
-        },
-        .DrawCastle => {
-            draw_castle(game_state);
-            game_state.current_state = .DrawCastleRow;
-        },
-        .DrawCastleRow => {
-            draw_castle_row(game_state);
-            game_state.castle_row_count -= 1;
-            if (game_state.castle_row_count < 0) {
-                game_state.current_state = .DrawCreditsInserted;
-                return;
-            }
-            advance_castle_row(game_state);
-        },
-        .DrawCreditsInserted => {
-            //@JSR AL.BER
-            erase_board(game_state);
-            //@LDA #10
-            //@JSR MS.DRW		;  credits
-            draw_message(0x10, game_state);
+    init_castle(game_state);
 
-            //TODO:
-            //@LDA WV.WAR
-            //@IFNE
-            //@ LDA #1A
-            //@ JSR MS.DRW		;  warp message
-            //@ TRAI 0C3 AL.X
-            //@ TRAI 3B AL.Y
-            //@ TRAM SC.HS1+HFSIZ-1 SC.NM
-            //@ TRAM SC.HS2+HFSIZ-1 SC.NM+1
-            //@ TRAM SC.HS3+HFSIZ-1 SC.NM+2
-            //@ JSR SC.NDS		;  display high score
-            //@ LDA #10	        ; wait 40 seconds before
-            //@ELSE			; deactivating warp
-            //@ LDA #1
+    while (true) {
+        draw_castle_row(game_state);
+        game_state.castle_row_count -= 1;
+        if (game_state.castle_row_count < 0) {
+            break;
+        }
+        advance_castle_row(game_state);
+    }
 
-            //NOTE it is actually 0x200, because the first decrement
-            //@    doesn't affect the high byte
-            game_state.main_loop_delay = 0x200;
-            //@ENDIF
-            //@STA 1+MN.DEL
+    {
+        //@JSR AL.BER
+        erase_board(game_state);
+        //@LDA #10
+        //@JSR MS.DRW		;  credits
+        draw_message(0x10, game_state);
 
-            game_state.current_state = .AttractModeMainLoop;
-        },
-        .AttractModeMainLoop => {
-            update_attract_mode(game_state);
-        },
-        //GM.ST
-        .StartGame => {
-            //TODO: code seems to be in  CJTB.MAC
-            //@SEI
-            //@JSR MN.SNI
-            //@CLI
+        //TODO:
+        //@LDA WV.WAR
+        //@IFNE
+        //@ LDA #1A
+        //@ JSR MS.DRW		;  warp message
+        //@ TRAI 0C3 AL.X
+        //@ TRAI 3B AL.Y
+        //@ TRAM SC.HS1+HFSIZ-1 SC.NM
+        //@ TRAM SC.HS2+HFSIZ-1 SC.NM+1
+        //@ TRAM SC.HS3+HFSIZ-1 SC.NM+2
+        //@ JSR SC.NDS		;  display high score
+        //@ LDA #10	        ; wait 40 seconds before
+        //@ELSE			; deactivating warp
+        //@ LDA #1
 
-            //@JSR WV.INI		; init waves
-            initialize_wave_data(game_state);
+        //NOTE it is actually 0x200, because the first decrement
+        //@    doesn't affect the high byte
+        game_state.main_loop_delay = 0x200;
+        //@ENDIF
+        //@STA 1+MN.DEL
 
-            //TODO:
-            //@LDA #0
-            //@JSR MN.SN1	;  start game music
+        game_state.current_state = .AttractModeMainLoop;
+    }
 
-            //@JSR GM.SW0
-            start_of_wave(game_state);
-            //@JMP GM.ENL
-        },
-        //@ GM.SW:
-        .StartOfWave => {
-            //@ 	JSR MN.FRA
-            if (!frame_handler(game_state)) {
-                return;
-            }
+    while (game_state.current_state == .AttractModeMainLoop) {
+        update_attract_mode(game_state);
+    }
+    //GM.ST
+    while (game_state.current_state == .StartGame) {
+        //TODO: code seems to be in  CJTB.MAC
+        //@SEI
+        //@JSR MN.SNI
+        //@CLI
 
-            //************TODO**************
-            //@ 	JSR CT.GDR		; draw a row of gems
+        //@JSR WV.INI		; init waves
+        initialize_wave_data(game_state);
 
-            //@ 	JMP GM.ENL
-        },
+        //TODO:
+        //@LDA #0
+        //@JSR MN.SN1	;  start game music
+
+        //@JSR GM.SW0
+        start_of_wave(game_state);
+        //@JMP GM.ENL
+        next_frame(game_state);
+    }
+    //@ GM.SW:
+    while (game_state.current_state == .StartOfWave) {
+        //@ 	JSR MN.FRA
+        frame_handler(game_state);
+
+        //************TODO**************
+        //@ 	JSR CT.GDR		; draw a row of gems
+
+        //@ 	JMP GM.ENL
+        next_frame(game_state);
+    }
+    while (true) {
+        next_frame(game_state);
     }
 }
+
 //;  ----- state 2: start of wave
 //GM.SW0
 fn start_of_wave(game_state: *GameState) void {
@@ -919,14 +942,157 @@ fn start_of_wave(game_state: *GameState) void {
     //@	JSR EN.INI		; init entities
     init_entities(game_state);
 
-    //*******TODO******
     //@	JSR EN.INP		; and positions
     init_all_entity_positions(game_state);
     //@	JSR MN.INM		; zero motion objects
+    {
+        //@ ;--------------------------------------
+        //@ ;  init motion objects at start of game
+        //@ MN.INM:
+
+        //@	LDX #2
+        //@	BEGIN
+        inline for (1..MAX_NUMBER_OF_ENTITIES) |entity| {
+            //@	 TRAI 0F0 EN.Y(X)
+            game_state.entity_position[entity][1] = 0xF0;
+            //@	 JSR MN.OFI
+            //@     ;-------------
+            //@; init offsets
+            //@MN.OFI:
+            //@	TRAI 0 EN.XO1(X)
+            //@	STA  EN.YO1(X)
+            //@	STA  EN.XO2(X)
+            //@	STA  EN.YO2(X)
+            //@	STA  EN.XO3(X)
+            //@	STA  EN.YO3(X)
+            //@	STA  EN.XO4(X)
+            //@	STA  EN.XO4(X)
+            game_state.entity_motion_object_offsets[entity] = .{
+                ZV2, ZV2, ZV2, ZV2,
+            };
+            //@	RTS
+            //@	INXS 2
+            //@	CPX EN.NUM
+            //@	PLEND
+        }
+
+        //@	TRAI 80 EN.X
+        //@	TRAI 08 EN.Y
+        //TODO: I think the entity position is unsigned, but the offsets are signed
+        game_state.entity_position[0] = .{ 0x80, 8 };
+        //@	RTS
+    }
     //@	JSR WV.BSP		; move bear to starting pos
+    {
+        //@ ;--------------------------------
+        //@;  move bear to starting position
+        //@WV.BSP:
+        //@;  bear facing away
+        //@	LDX #0
+        //@	LDA #11
+        //@	JSR EN.PCF
+        fill_entity_pictures(0x11, PLAYER_ENTITY, game_state);
+
+        //@; determine destination
+        //@	LDA EN.VP
+        //@	ADD EN.HEI
+        //@	SUB #6
+        //@	STA EN.DSY
+        //@	LDA EN.HP
+        //@	ADD #1
+        //@	STA EN.DSX
+        const player_destination =
+            game_state.entity_picture_position[PLAYER_ENTITY] +
+            V2{ 1, game_state.entity_height[PLAYER_ENTITY] - 6 };
+
+        //NOTE(DanB): WV.BSP falls through to WV.BMV instead of jumping to it
+        //@WV.BMV:
+        move_player_to_destination(player_destination, game_state);
+    }
     //@	JSR EN.INI		; reinit entities
+    init_entities(game_state);
+    //*******TODO******
     //@	JSR CT.GIN		; init for gem drawing
 }
+//@WV.BMV:
+//@; loop to move to destination
+//Returns false if we need to wait for frame handler
+fn move_player_to_destination(destination: V2, game_state: *GameState) void {
+    var finished_moving = false;
+    //@	BEGIN
+    while (!finished_moving) {
+        //@	 JSR MN.FRA
+        frame_handler(game_state);
+        //@	 JSR MT.UPD
+        update_motion_objects(game_state);
+        //@	 TRAI 0 TEMP1
+        //@	 JSR WV.MVX
+        //@	 JSR WV.MVY
+        const player_position = &game_state.entity_position[PLAYER_ENTITY];
+        //@;----------------------------
+        //@;  move bear to X destination
+        //@WV.MVX:
+        //@	LDA EN.X
+        //@	SUB EN.DSX
+
+        //@	IFCC
+        //@	 ADAI 4 EN.X
+        //@	 JMP WV.FFF
+        //@	ENDIF
+
+        //@	CMP #4
+        //@	IFCS
+        //@	 SBAI 4 EN.X
+        //@	 JMP WV.FFF
+        //@	ENDIF
+        //@	TRAM EN.DSX EN.X
+        //@	RTS
+        //@WV.FFF:
+        //@	TRAI 0FF TEMP1
+        //@	RTS
+
+        //@;----------------------------
+        //@;  move bear to Y destination
+        //@WV.MVY:
+
+        //@	LDA EN.Y
+        //@	SUB EN.DSY
+
+        //@	IFCC
+        //@	 ADAI 4 EN.Y
+        //@	 JMP WV.FFF
+        //@	ENDIF
+
+        //@	CMP #4
+        //@	IFCS
+        //@	 SBAI 4 EN.Y
+        //@	 JMP WV.FFF
+        //@	ENDIF
+
+        //@	TRAM EN.DSY EN.Y
+        //@	RTS
+        finished_moving = true;
+        inline for (0..2) |i| {
+            const delta = player_position[i] - destination[i];
+            if (delta < 0) {
+                player_position[i] += 4;
+                finished_moving = false;
+            } else if (delta >= 4) {
+                player_position.*[i] -= 4;
+                finished_moving = false;
+            } else {
+                player_position[i] = destination[i];
+            }
+        }
+
+        //@	 LDA TEMP1
+        //@	EQEND
+
+    }
+
+    //@	RTS
+}
+
 //@;------------------------
 //@;  init for start of wave
 //@EN.INI:
@@ -973,13 +1139,13 @@ fn init_entities(game_state: *GameState) void {
             //@	 STA	    EN.XO4
             const STARTING_PLAYER_MOTION_OBJECT_POSITIONS =
                 [_]V2{
-                .{ 0xFC, 0xF - 3 },
-                .{ 0xFC, 0xF - 3 },
-                .{ 4, 0xFF - 3 },
-                .{ 4, 0xFF - 3 },
+                .{ to_isize(0xFC), 0xF - 3 },
+                .{ 4, 0xF - 3 },
+                .{ to_isize(0xFC), to_isize(0xFF - 3) },
+                .{ 4, to_isize(0xFF - 3) },
             };
             @memcpy(
-                &game_state.entity_motion_object_positions[entity],
+                &game_state.entity_motion_object_offsets[entity],
                 &STARTING_PLAYER_MOTION_OBJECT_POSITIONS,
             );
         }
@@ -997,13 +1163,13 @@ fn init_entities(game_state: *GameState) void {
             //@	 STA	 EN.XO4(X)
             const STARTING_PLAYER_MOTION_OBJECT_POSITIONS =
                 [_]V2{
-                .{ 0xFF, 0xF },
-                .{ 0xFF, 0xF },
-                .{ 7, 0xFF },
-                .{ 7, 0xFF },
+                .{ to_isize(0xFF), 0xF },
+                .{ 7, 0xF },
+                .{ to_isize(0xFF), to_isize(0xFF) },
+                .{ 7, to_isize(0xFF) },
             };
             @memcpy(
-                &game_state.entity_motion_object_positions[entity],
+                &game_state.entity_motion_object_offsets[entity],
                 &STARTING_PLAYER_MOTION_OBJECT_POSITIONS,
             );
 
@@ -1168,7 +1334,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
             game_state.entity_blanking_flag[entity] = false;
             //@	  TRAI 14 EN.MX
             //@	  TRAI 11 EN.MY
-            game_state.entity_position[entity] = .{ 14, 11 };
+            game_state.entity_playfield_position[entity] = .{ 0x14, 0x11 };
         }
         //@	ELSE
         else {
@@ -1187,7 +1353,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
             //@	  TAY
             //@	  TRAM DF.INX(Y) EN.MX(X)
             //@	  TRAM DF.INY(Y) EN.MY(X)
-            game_state.entity_position[entity] =
+            game_state.entity_playfield_position[entity] =
                 CREATURE_INITIAL_POSITIONS[creature_initial_position_index];
 
             //@;  swarm on top of player after too much time
@@ -1218,13 +1384,13 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
                         game_state.tune_table_keys[1] = (@divTrunc(game_state.wave_time, 0x100)) + 3;
                         //@	    TRAM EN.MX EN.MX(X)
                         //@	    LDA EN.MY
-                        game_state.entity_position[entity] = game_state.entity_position[entity];
+                        game_state.entity_playfield_position[entity] = game_state.entity_playfield_position[PLAYER_ENTITY];
                     }
                     //@	   ELSE
                     else {
                         //@	    LDA #014
                         //@	    STA EN.MX(X)
-                        game_state.entity_position[entity] = .{ 0x14, 0x14 };
+                        game_state.entity_playfield_position[entity] = .{ 0x14, 0x14 };
                         //@	   ENDIF
                     }
                     //@	   STA EN.MY(X)
@@ -1308,15 +1474,15 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         //@	TR16AI CTRAM EN.MAT(X)
 
         //@	JSR EN.MUL
-        const entity_position =
-            game_state.entity_position[entity];
+        const entity_playfield_position =
+            game_state.entity_playfield_position[entity];
         //NOTE: the playfield is column-major
 
         //NOTE this is EN.OFF
         const playfield_offset: usize =
             @intCast(
-            entity_position[0] * PLAYFIELD_HEIGHT +
-                entity_position[1],
+            entity_playfield_position[0] * PLAYFIELD_HEIGHT +
+                entity_playfield_position[1],
         );
         //@	AD16AM EN.MAT(X) EN.OFF
         game_state.entity_playfield_offset[entity] = playfield_offset;
@@ -1324,7 +1490,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         //@	TR16AM EN.MAT(X) EN.MA2(X)
         //@	AD16AI EN.MA2(X) 16*16
         game_state.entity_playfield_offset2[entity] =
-            PLAYFIELD_WIDTH * PLAYFIELD_HEIGHT;
+            PLAYFIELD_WIDTH * PLAYFIELD_HEIGHT + playfield_offset;
 
         //@	TR16AM EN.MAT(X) EZ.MAT
         //@	TR16AM EN.MA2(X) EZ.MA2
@@ -1343,7 +1509,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         if (game_state.entity_height[entity] == 0) {
             //@	 TRAI 1 EN.MX(X)
             //@	 STA    EN.MY(X)
-            game_state.entity_position[entity] =
+            game_state.entity_playfield_position[entity] =
                 .{ 1, 1 };
             //@	 BNE 10$		;  BRA
             //@	ENDIF
@@ -1352,71 +1518,273 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         }
     }
 
-    // **** TODO ****
-
+    const entity_playfield_position = game_state.entity_playfield_position[entity];
+    const picture_position = &game_state.entity_picture_position[entity];
     //@; horizontal position
     //@	LDA EN.MX(X)
     //@	SUB #1
     //@	ASLS 2
     //@	STA EN.T1
+    const t1 = (entity_playfield_position[0] - 1) * 4;
     //@	LDA EN.MY(X)
     //@	SUB #1
     //@	ASLS 3
     //@	STA EN.T2
+    var t2 = (entity_playfield_position[1] - 1) * 8;
     //@	LDA #CT.HST-9	; picture offset
     //@	ADD EN.T2
     //@	SUB EN.T1
     //@	STA EN.HP(X)
+    picture_position[0] = (0x5C - 9) + t2 - t1;
 
     //@; vertical position
     //@	LDA EN.MY(X)
     //@	SUB #1
     //@	ASL
     //@	STA EN.T2
+    t2 = (entity_playfield_position[1] - 1) * 2;
     //@	LDA #0-CT.VST-0B+06+0A	; picture offset
     //@	SUB EN.T2
     //@	SUB EN.T1
     //@	STA EN.VP(X)
+    picture_position[1] = 0x7F - t2 - t1;
 
     //@;  screen vert coordinate (used for scrolling down)
     //@	ADD EN.HEI(X)
     //@	STA EN.Y(X)
     //@	LDA EN.HP(X)
     //@	STA EN.X(X)
+    game_state.entity_position[entity] =
+        .{
+        picture_position[0],
+        picture_position[1] + game_state.entity_height[entity],
+    };
 
     //@; pictures
     //@	TRAI 2  EN.AND(X)
+    game_state.entity_animation_direction[entity] = 2;
 
     //@	LDA #11
     //@	JSR EN.PCF	;  bear
+    fill_entity_pictures(
+        0x11,
+        entity,
+        game_state,
+    );
 
     //@; priority
     //@	LDY #0
     //@	LDA @EZ.MA2(Y)
+    const some_value =
+        game_state.current_wave_data[
+        game_state.entity_playfield_offset2[PLAYER_ENTITY]
+    ];
     //@	AND #40
     //@	IFNE
     //@	 TRAI 0 EN.PR1(X)
     //@	ELSE
     //@	 TRAI 0FF EN.PR1(X)
     //@	ENDIF
+    game_state.entity_priority[entity][0] =
+        if (some_value & 0x40 != 0) 0 else -1;
 
     //@; fine x,y
     //@	TRAI 10 EN.IX(X)
     //@	TRAI 0C EN.IY(X)
+    game_state.entity_fine_position[entity] = .{ 0x10, 0xC };
 
     //@;  set collision bit, if not dead
     //@	LDA EN.LMD(X)
     //@	CMP #3
     //@	IFNE
-
     //@	CPX #0
     //@	IFNE
-    //@	 LDA @EZ.MA2(Y)
-    //@	 ORA #08
-    //@	 STA @EZ.MA2(Y)
-    //@	ENDIF
+    if (game_state.entity_life_mode[entity] != 3 and
+        entity != PLAYER_ENTITY)
+    {
 
-    //@	ENDIF
+        //@	 LDA @EZ.MA2(Y)
+        //@	 ORA #08
+        //@	 STA @EZ.MA2(Y)
+        game_state.current_wave_data[
+            game_state.entity_playfield_offset2[PLAYER_ENTITY]
+        ] |= 8;
+
+        //@	ENDIF
+
+        //@	ENDIF
+    }
+}
+
+//@;----------------------------------
+//@;  routine to update motion objects
+//@MT.UPD:
+fn update_motion_objects(game_state: *GameState) void {
+
+    //@	JSR MT.SOR	;  sort them
+    // ;------------------------------
+    // ;  sort motion objects
+    // MT.SOR:
+    // ;  init pointers
+    // 	LDX #15
+    // 	LDA #0
+    // 	BEGIN
+    // 	 STA EN.SPT(X)
+    // 	DEX
+    // 	MIEND
+    var column_indices = [_]isize{0} ** PLAYFIELD_WIDTH;
+    var sorted_entities = [_]usize{0} **
+        (MAX_NUMBER_OF_ENTITIES * PLAYFIELD_WIDTH);
+    // ;  sort
+    // 	LDX #0
+    // 	BEGIN
+    for (0..MAX_NUMBER_OF_ENTITIES) |entity| {
+        // ;       	update pointer
+        //NOTE: I am hoping its the column-major-ness of the playfield is what's associating MX as the
+        //      "row index" instead of the column index
+        // 	 LDY EN.MX(X)	; row index
+        const entity_x = game_state.entity_playfield_position[entity][0];
+        // 	 LDA EN.SPT(Y)
+        // 	 STA TEMP1	; column index
+        const column_index = column_indices[@intCast(entity_x)];
+        // 	 ADD #1
+        // 	 STA EN.SPT(Y)	; inc pointer
+        column_indices[@intCast(entity_x)] += 1;
+        // ;		update matrix
+        // 	 TYA
+        // 	 ASL		;  multiply by 10=EN.MAX
+        // 	 STA TEMP3
+        // 	 ASLS 2
+        // 	 ADD TEMP3
+        // 	 ADD TEMP1
+        // 	 TAY
+        // 	 TXA
+        // 	 STA EN.SOR(Y)
+        sorted_entities[@intCast(entity_x * MAX_NUMBER_OF_ENTITIES + column_index)] = entity;
+
+        // 	INXS 2
+        // 	CPX EN.NUM
+        // 	PLEND
+    }
+    // 	RTS
+
+    //@	LDY #0
+    //@	STY TEMP1
+    //@	STY TEMP2
+    var temp2: isize = 0;
+    var motion_objects_cursor: usize = 0;
+    //@	BEGIN
+    for (0..PLAYFIELD_WIDTH) |x| {
+        //@10$:
+        while (true) {
+            //@	 LDX TEMP1
+            //@	 DEC EN.SPT(X)
+            column_indices[x] -= 1;
+
+            //@	 IFPL
+            if (column_indices[x] >= 0) {
+                //@	  LDA EN.SPT(X)
+                //@	  ADD TEMP2
+                //@	  TAX
+                //@	  LDA EN.SOR(X)
+                //@	  TAX
+                const entity = sorted_entities[
+                    @intCast(column_indices[x] + temp2)
+                ];
+                //@	  JSR EN.PMV
+                draw_motion_objects(
+                    entity,
+                    game_state,
+                    &motion_objects_cursor,
+                );
+
+                //@	  JMP 10$
+                //@	 ENDIF
+            } else {
+                break;
+            }
+        }
+
+        //@	INC TEMP1
+        //NOTE handled in for loop
+
+        //@	ADAI EN.MAX TEMP2
+        temp2 += MAX_NUMBER_OF_ENTITIES;
+
+        //@	LDA TEMP1
+        //@	CMP #16
+        //@	EQEND
+    }
+
+    //@	LDA MT.CUR
+    //@	EOR #1
+    //@	STA MT.CUR
+
+    //@	RTS
+}
+
+// ;-----------------------------
+// ;  move pictures
+// EN.PMV:
+fn draw_motion_objects(
+    entity: usize,
+    game_state: *GameState,
+    motion_objects_cursor: *usize,
+) void {
+    //NOTE: The implementation here will deviate from the original code in that we will actually have
+    // a struct of picture objects that we will modify.  In addition, I've gotten rid of the double buffer
+    // which is unncessary here.
+    for (0..MOTION_OBJECTS_PER_ENTITY) |i| {
+        const motion_object = &game_state.motion_objects[motion_objects_cursor.*];
+        const effective_position = game_state.entity_position[entity] +
+            game_state.entity_motion_object_offsets[entity][i];
+        // if (effective_position[0] == 252)
+        //     @breakpoint();
+        motion_object.* = .{
+            .picture_number = game_state.entity_picture[entity][i],
+            .position = effective_position,
+            .flags = @bitCast(game_state.entity_priority[entity][i]),
+        };
+        motion_objects_cursor.* += 1;
+    }
+}
+
+//@ ;----------------------
+//@ ;  fill pictures with data
+//@ EN.PCF:
+fn fill_entity_pictures(
+    picture_number: isize,
+    entity: usize,
+    game_state: *GameState,
+) void {
+    if (picture_number != 0) {
+        //@	STA EN.PC1(X)
+        //@	BEQ 10$
+        //@	ADD #1
+        //@	STA EN.PC2(X)
+        //@	ADC #1
+        //@	STA EN.PC3(X)
+        //@	ADC #1
+        //@	STA EN.PC4(X)
+        //@	RTS
+        inline for (
+            &game_state.entity_picture[entity],
+            0..,
+        ) |*p, i| {
+            p.* = picture_number + i;
+        }
+    } else {
+        //@10$:
+        //@	STA EN.PC2(X)
+        //@	STA EN.PC3(X)
+        //@	STA EN.PC4(X)
+        //@	RTS
+        inline for (
+            &game_state.entity_picture[entity],
+        ) |*p| {
+            p.* = 0;
+        }
+    }
 }
 
 //MN.SNI
@@ -1783,16 +2151,7 @@ fn initialize_wave_data(game_state: *GameState) void {
     compute_wave_parameters(game_state);
 
     //@JSR MT.INI		; init motion objects
-    init_motion_objects(game_state);
-}
-
-fn init_motion_objects(game_state: *GameState) void {
-    //@TRAI 0 MT.CUR
-    game_state.motion_objects_current = 0;
-    //@STA    MT.PRE
-    game_state.motion_objects_previous = 0;
-    //@TRAI 80 MT.BSL	; select buffer 1
-    game_state.motion_objects_selected_buffer = 1;
+    //NOTE we don't need this since we don't need to do double buffering
 }
 
 //@;-------------------------------------------
@@ -2207,7 +2566,7 @@ fn advance_castle_row(game_state: *GameState) void {
     game_state.castle_row_position += .{ -4, 4 };
 }
 //CT.DRW
-fn draw_castle(game_state: *GameState) void {
+fn init_castle(game_state: *GameState) void {
     //@;  traverse through rows
     //@TR16AI CTRAM CT.ACL
     game_state.castle_acl = 0;
@@ -2392,9 +2751,7 @@ fn draw_block(game_state: *GameState) void {
 fn update_attract_mode(game_state: *GameState) void {
 
     //@	JSR MN.FRA
-    if (!frame_handler(game_state)) {
-        return;
-    }
+    frame_handler(game_state);
     //@	TRAI 0 ATRACT		; atract mode is on
     game_state.is_in_attract_mode = true;
 
@@ -2762,16 +3119,11 @@ fn initialize_game_start_state(game_state: *GameState) void {
 }
 
 //MN.FRA
-//This returns false if there pending draw commands that should be flushed
-//Before we continue drawing more things.
-fn frame_handler(game_state: *GameState) bool {
+fn frame_handler(game_state: *GameState) void {
     //@    10$:	 LSR SYNC		;
     //@	 BCC 10$		;  frame handler
+    next_frame(game_state);
 
-    //NOTE: this is how we sync the frame
-    if (!game_state.draw_command_queue.is_empty()) {
-        return false;
-    }
     //@	INC16 FRAME
     game_state.frame +%= 1;
     //@	INC16 WV.TIM
@@ -2787,7 +3139,6 @@ fn frame_handler(game_state: *GameState) bool {
     //@MN.HOU:
     //@	STA HW.WDC		; prevent watchdog reset
     //@	JSR EEACC1		;  coin stats
-    return true;
 }
 
 //CL.PR
@@ -3481,6 +3832,14 @@ fn draw_tunnel(game_state: *GameState) void {
     unreachable;
 }
 
+fn next_frame(game_state: *GameState) void {
+    if (game_state.debug_should_not_yield) {
+        return;
+    }
+    //TODO: system advance to only yield once a certain state is reacjhed
+    fiber.yield();
+}
+
 inline fn add_draw_line_command(
     shape: DrawCommand.Shape,
     color: Color,
@@ -3524,6 +3883,17 @@ fn add_draw_command(
     command: DrawCommand,
     game_state: *GameState,
 ) void {
+    //NOTE: 200 is arbitrarily chosen
+    const MAX_DRAW_COMMANDS_PER_FRAME = 200;
+    game_state.number_of_draw_commands_this_frame += 1;
+
+    if (game_state.number_of_draw_commands_this_frame >=
+        MAX_DRAW_COMMANDS_PER_FRAME)
+    {
+        next_frame(game_state);
+        game_state.number_of_draw_commands_this_frame = 0;
+    }
+
     const position = command.position;
     toolbox.assert(
         !(position[0] < 0 or position[0] >= SCREEN_WIDTH or
@@ -3545,4 +3915,14 @@ fn add_draw_command(
     );
 }
 
-fn check_and_display_atari_easter_egg() void {}
+fn to_isize(comptime n: comptime_int) isize {
+    if (n & 0x80 != 0) {
+        return @as(isize, @as(i8, @bitCast(@as(u8, n))));
+    }
+    return @as(isize, n);
+    // return n;
+}
+
+fn check_and_display_atari_easter_egg() void {
+    //TODO
+}

@@ -62,22 +62,21 @@ pub const String8 = struct {
         var i: usize = 0;
         var start_byte: usize = 0;
 
-        if (rune_start != 0) {
-            while (it.next()) |rune_and_len| {
-                defer i += 1;
-                if (i == rune_start - 1) {
-                    start_byte += rune_and_len.len;
-                    if (rune_end_opt == null) {
-                        return .{
-                            .bytes = self.bytes[start_byte..],
-                            .rune_length = self.rune_length - rune_start,
-                        };
-                    } else {
-                        break;
-                    }
+        while (it.next()) |rune_and_len| {
+            if (i == rune_start) {
+                if (rune_end_opt == null) {
+                    return .{
+                        .bytes = self.bytes[start_byte..],
+                        .rune_length = self.rune_length - rune_start,
+                    };
+                } else {
+                    break;
                 }
             }
+            i += 1;
+            start_byte += rune_and_len.len;
         }
+
         var end_byte: usize = start_byte;
         if (rune_end_opt) |rune_end| {
             while (it.next()) |rune_and_len| {

@@ -4,6 +4,7 @@ const build_info = @import("build_info");
 const pdapi = @import("playdate_api.zig");
 const cc = @import("crystal_castles.zig");
 const profiler = toolbox.profiler;
+const fiber = toolbox.fiber;
 
 pub const THIS_PLATFORM = toolbox.Platform.Playdate;
 pub const ENABLE_PROFILER = !toolbox.IS_DEBUG;
@@ -14,6 +15,7 @@ const PlatformState = struct {
 
     last_frame_time: toolbox.Duration,
     background_image: *pdapi.LCDBitmap,
+    motion_object_tiles: *pdapi.LCDBitmapTable,
     castle_bitmap: *pdapi.LCDBitmap,
     frame_arena: *toolbox.Arena,
     global_arena: *toolbox.Arena,
@@ -34,7 +36,8 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
             );
             pdapi.set_refresh_rate(50);
 
-            const background_image = pdapi.load_bitmap("images/background");
+            const background_image = pdapi.load_bitmap("assets/images/background");
+            const motion_object_tiles = pdapi.load_bitmap_table("assets/images/motion_objects");
             const castle_bitmap = pdapi.new_bitmap_solid_color(
                 cc.SCREEN_WIDTH,
                 cc.SCREEN_HEIGHT,
@@ -48,11 +51,13 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
             };
             const frame_arena = toolbox.Arena.init(toolbox.kb(512));
             const global_arena = toolbox.Arena.init(toolbox.mb(2));
+            const game_state = global_arena.push(cc.GameState);
             StaticVars.platform_state = .{
                 .background_image = background_image,
+                .motion_object_tiles = motion_object_tiles,
                 .frame_arena = frame_arena,
                 .global_arena = global_arena,
-                .game_state = global_arena.push(cc.GameState),
+                .game_state = game_state,
                 .last_frame_time = toolbox.now(),
                 .castle_bitmap = castle_bitmap,
                 .frame_count = 0,
@@ -62,6 +67,8 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
                 StaticVars.platform_state.game_state,
                 StaticVars.platform_state.global_arena,
             );
+            fiber.init(global_arena, 2, toolbox.kb(64));
+            fiber.go(&cc.update, .{StaticVars.platform_state.game_state});
 
             pdapi.set_update_callback(update_and_render, &StaticVars.platform_state);
         },
@@ -70,7 +77,6 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
     return 0;
 }
 
-var go: bool = false;
 fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     profiler.start_profiler();
     const platform_state: *PlatformState = @ptrCast(@alignCast(userdata.?));
@@ -84,14 +90,10 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     const dt = now.subtract(platform_state.last_frame_time);
     platform_state.last_frame_time = now;
 
-    //TODO: debug code, delete
-    // if (pdapi.is_button_pressed(pdapi.BUTTON_A)) {
-    //     go = true;
-    // }
-    // if (go) {
     {
         profiler.begin("cc.update");
-        cc.update(dt, game_state);
+        game_state.dt = dt;
+        fiber.yield();
         profiler.end();
     }
     const command_count: usize = if (game_state.draw_command_queue.rcursor <=
@@ -104,7 +106,7 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
             game_state.draw_command_queue.wcursor + 1;
     {
         profiler.begin("update_castle_bitmap");
-        update_castle_bitmap(dt, platform_state);
+        update_castle_bitmap(platform_state);
         profiler.end();
     }
     // }
@@ -142,6 +144,19 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
             .BitmapUnflipped,
         );
         pdapi.draw_bitmap(platform_state.castle_bitmap, 0, 0, .BitmapUnflipped);
+
+        //draw sprites, aka motion objects
+        {
+            for (game_state.motion_objects) |mo| {
+                const tile = pdapi.get_table_bitmap(
+                    platform_state.motion_object_tiles,
+                    @intCast(mo.picture_number),
+                ).?;
+                const x: pdapi.Pixel = @intCast(mo.position[0]);
+                const y: pdapi.Pixel = @intCast(256 - 16 - mo.position[1] - cc.Y_COORDINATE_OFFSET);
+                pdapi.draw_bitmap(tile, x, y, .BitmapUnflipped);
+            }
+        }
     }
     //draw hud
     {
@@ -155,26 +170,110 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
         const y = pdapi.LCD_ROWS - pdapi.get_font_height() - 1;
         _ = pdapi.draw_text(build_number_str.bytes, x, y);
     }
-    if ((comptime ENABLE_PROFILER) and pdapi.is_button_down(pdapi.BUTTON_B)) {
-        profiler.end_profiler();
-        var background_width: pdapi.Pixel = 0;
 
-        //TODO draw profiler and other stats
-        var lines = toolbox.DynamicArray(toolbox.String8).init(
-            platform_state.frame_arena,
-            32,
-        );
-        {
-            const str = toolbox.str8fmt(
-                "# draw commands: {}",
-                .{command_count},
-                platform_state.frame_arena,
-            );
-            lines.append(str);
-            background_width = pdapi.get_text_width(str.bytes);
+    profiler.end_profiler();
+    if (pdapi.is_button_down(pdapi.BUTTON_B)) {
+        draw_debug_and_profiler_hud(platform_state, command_count);
+    }
+    //draw fps
+    {
+        pdapi.draw_fps(pdapi.LCD_COLUMNS - 20, 0);
+    }
+
+    return 1;
+}
+
+pub fn update_castle_bitmap(
+    platform_state: *PlatformState,
+) void {
+    const castle_bitmap_data = pdapi.get_bitmap_data(platform_state.castle_bitmap);
+
+    const game_state = platform_state.game_state;
+    while (game_state.draw_command_queue.dequeue()) |command| {
+        const StaticVars = struct {
+            var line_number: isize = 0;
+        };
+        StaticVars.line_number += 1;
+        switch (command.shape) {
+            .Line1 => draw_line1(
+                command.number_of_segments,
+                command.position,
+                command.color,
+                castle_bitmap_data,
+            ),
+            .Line2 => draw_line2(
+                command.number_of_segments,
+                command.position,
+                command.color,
+                castle_bitmap_data,
+            ),
+            .Line3 => draw_line3(
+                command.number_of_segments,
+                command.position,
+                command.color,
+                castle_bitmap_data,
+            ),
+            .Character => draw_character(
+                command.character,
+                command.position,
+                command.color,
+                castle_bitmap_data,
+            ),
+            .ScreenErase => screen_erase(
+                command.position,
+                command.number_of_segments,
+                castle_bitmap_data,
+            ),
+            .Pixel => {
+                draw_pixel(
+                    command.position,
+                    command.color == .White,
+                    castle_bitmap_data,
+                );
+            },
+            .None => unreachable,
         }
-        lines.append(toolbox.str8lit(""));
+    }
+}
+fn draw_debug_and_profiler_hud(
+    platform_state: *PlatformState,
+    command_count: usize,
+) void {
+    const game_state = platform_state.game_state;
+    var background_width: pdapi.Pixel = 0;
 
+    //TODO draw profiler and other stats
+    var lines = toolbox.DynamicArray(toolbox.String8).init(
+        platform_state.frame_arena,
+        32,
+    );
+    {
+        const str = toolbox.str8fmt(
+            "# draw commands: {}",
+            .{command_count},
+            platform_state.frame_arena,
+        );
+        lines.append(str);
+        background_width = pdapi.get_text_width(str.bytes);
+    }
+    lines.append(toolbox.str8lit(""));
+
+    //TODO: this is too many lines.  need smaller font
+    _ = game_state;
+    // {
+    //     for (game_state.motion_objects) |mo| {
+    //         const x: pdapi.Pixel = @intCast(mo.position[0]);
+    //         const y: pdapi.Pixel = @intCast(256 - 16 - mo.position[1] - cc.Y_COORDINATE_OFFSET);
+    //         const str = toolbox.str8fmt(
+    //             "Sprite : Tile: {}, X: {}, Y: {}, flags: {}",
+    //             .{ mo.picture_number, x, y, mo.flags },
+    //             platform_state.frame_arena,
+    //         );
+    //         lines.append(str);
+    //         background_width = @max(background_width, pdapi.get_text_width(str.bytes));
+    //     }
+    // }
+    if (comptime ENABLE_PROFILER) {
         const stats = toolbox.profiler.compute_statistics_of_current_state(
             platform_state.frame_arena,
         );
@@ -192,110 +291,23 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
             background_width = @max(background_width, pdapi.get_text_width(str.bytes));
             lines.append(str);
         }
-
-        const background_height = pdapi.get_font_height() * @as(
-            pdapi.Pixel,
-            @intCast(lines.len()),
-        );
-        pdapi.fill_rect(
-            0,
-            0,
-            background_width,
-            background_height,
-            pdapi.solid_color_to_color(pdapi.LCDSolidColor.ColorWhite),
-        );
-        var y: pdapi.Pixel = 0;
-        for (lines.items()) |line| {
-            _ = pdapi.draw_text(line.bytes, 0, y);
-            y += pdapi.get_font_height();
-        }
-    }
-    //draw fps
-    {
-        pdapi.draw_fps(pdapi.LCD_COLUMNS - 20, 0);
     }
 
-    return 1;
-}
-
-const ENABLE_CRANK_TO_DRAW = false;
-pub fn update_castle_bitmap(
-    dt: toolbox.Duration,
-    platform_state: *PlatformState,
-) void {
-    const number_of_lines_to_draw: usize = b: {
-        if (ENABLE_CRANK_TO_DRAW) {
-            const crank_change = pdapi.get_crank_change();
-            if (crank_change <= 0) {
-                return;
-            }
-            const LINES_PER_DEGREE = 5;
-            break :b @intFromFloat(LINES_PER_DEGREE * crank_change);
-        } else {
-            const dt_ms = dt.milliseconds();
-            const LINES_PER_MS = 10;
-            break :b @intCast(LINES_PER_MS * dt_ms);
-        }
-    };
-    const castle_bitmap_data = pdapi.get_bitmap_data(platform_state.castle_bitmap);
-
-    const game_state = platform_state.game_state;
-    for (0..number_of_lines_to_draw) |_| {
-        if (game_state.draw_command_queue.dequeue()) |command| {
-            const StaticVars = struct {
-                var line_number: isize = 0;
-            };
-            // toolbox.println("{}: Shape: {s}, Color: {s}, Seg: {}, X: 0x{X}, Y: 0x{X}", .{
-            //     StaticVars.line_number,
-            //     @tagName(command.shape),
-            //     @tagName(command.color),
-            //     command.number_of_segments,
-            //     command.position[0],
-            //     command.position[1] + cc.Y_COORDINATE_OFFSET,
-            // });
-            StaticVars.line_number += 1;
-            switch (command.shape) {
-                .Line1 => draw_line1(
-                    command.number_of_segments,
-                    command.position,
-                    command.color,
-                    castle_bitmap_data,
-                ),
-                .Line2 => draw_line2(
-                    command.number_of_segments,
-                    command.position,
-                    command.color,
-                    castle_bitmap_data,
-                ),
-                .Line3 => draw_line3(
-                    command.number_of_segments,
-                    command.position,
-                    command.color,
-                    castle_bitmap_data,
-                ),
-                .Character => draw_character(
-                    command.character,
-                    command.position,
-                    command.color,
-                    castle_bitmap_data,
-                ),
-                .ScreenErase => screen_erase(
-                    command.position,
-                    command.number_of_segments,
-                    castle_bitmap_data,
-                ),
-                .Pixel => {
-                    draw_pixel(
-                        command.position,
-                        command.color == .White,
-                        castle_bitmap_data,
-                    );
-                },
-                .None => unreachable,
-            }
-        } else {
-            break;
-        }
+    const background_height = pdapi.get_font_height() * @as(
+        pdapi.Pixel,
+        @intCast(lines.len()),
+    );
+    pdapi.fill_rect(
+        0,
+        0,
+        background_width,
+        background_height,
+        pdapi.solid_color_to_color(pdapi.LCDSolidColor.ColorWhite),
+    );
+    var y: pdapi.Pixel = 0;
+    for (lines.items()) |line| {
+        _ = pdapi.draw_text(line.bytes, 0, y);
+        y += pdapi.get_font_height();
     }
 }
 

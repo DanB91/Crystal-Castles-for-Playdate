@@ -27,6 +27,7 @@ pub const Section = struct {
     time_elapsed_with_children: toolbox.Duration = .{},
     time_elapsed_without_children: toolbox.Duration = .{},
     min_time_elapsed_without_children: toolbox.Duration = .{},
+    max_time_elapsed_without_children: toolbox.Duration = .{},
 
     hit_count: u32 = 0,
     label_store: [MAX_LABEL_LEN]u8 = [_]u8{0} ** MAX_LABEL_LEN,
@@ -117,6 +118,11 @@ pub fn end() void {
         section.min_time_elapsed_without_children.ticks,
         elapsed.ticks,
     );
+    section.max_time_elapsed_without_children.ticks =
+        @max(
+        section.max_time_elapsed_without_children.ticks,
+        elapsed.ticks,
+    );
 
     g_state.current_section_index = block.parent_section_index;
 }
@@ -143,6 +149,7 @@ pub const SectionStatistics = struct {
     time_elapsed_without_children: toolbox.Duration = .{},
     time_elapsed_with_children: toolbox.Duration = .{},
     min_time_elapsed_without_children: toolbox.Duration = .{},
+    max_time_elapsed_without_children: toolbox.Duration = .{},
     percent_of_profiler_total_elapsed: f32 = 0,
     percent_with_children: f32 = 0,
     hit_count: u32 = 0,
@@ -151,23 +158,25 @@ pub const SectionStatistics = struct {
     pub fn str8(self: SectionStatistics, arena: *toolbox.Arena) toolbox.String8 {
         if (self.has_children) {
             return toolbox.str8fmt(
-                "{s}: {} hits, Total: {}mcs, Min: {}mcs, {d:.2}%, {d:.2}% w/children",
+                "{s}: {} hits, Total: {}mcs, Min: {}mcs, Max: {}mcs, {d:.2}%, {d:.2}% w/children",
                 .{
                     self.label_store[0..self.label_len],
                     self.hit_count,
                     self.time_elapsed_without_children.microseconds(),
                     self.min_time_elapsed_without_children.microseconds(),
+                    self.max_time_elapsed_without_children.microseconds(),
                     self.percent_of_profiler_total_elapsed,
                     self.percent_with_children,
                 },
                 arena,
             );
         } else {
-            return toolbox.str8fmt("{s}: {} hits, Total: {}mcs, Min: {}mcs, {d:.2}%", .{
+            return toolbox.str8fmt("{s}: {} hits, Total: {}mcs, Min: {}mcs, Max: {}mcs, {d:.2}%", .{
                 self.label_store[0..self.label_len],
                 self.hit_count,
                 self.time_elapsed_without_children.microseconds(),
                 self.min_time_elapsed_without_children.microseconds(),
+                self.max_time_elapsed_without_children.microseconds(),
                 self.percent_of_profiler_total_elapsed,
             }, arena);
         }
@@ -219,6 +228,7 @@ pub fn compute_statistics(snapshot: *const State, arena: *toolbox.Arena) Statist
                 .label_len = section.label_len,
                 .time_elapsed_without_children = section.time_elapsed_without_children,
                 .min_time_elapsed_without_children = section.min_time_elapsed_without_children,
+                .max_time_elapsed_without_children = section.max_time_elapsed_without_children,
                 .percent_of_profiler_total_elapsed = percent_of_profiler_total_elapsed,
                 .percent_with_children = percent_with_children,
                 .has_children = has_children,
@@ -230,6 +240,7 @@ pub fn compute_statistics(snapshot: *const State, arena: *toolbox.Arena) Statist
                 .label_len = section.label_len,
                 .time_elapsed_without_children = section.time_elapsed_without_children,
                 .min_time_elapsed_without_children = section.min_time_elapsed_without_children,
+                .max_time_elapsed_without_children = section.max_time_elapsed_without_children,
                 .percent_of_profiler_total_elapsed = percent_of_profiler_total_elapsed,
                 .hit_count = section.hit_count,
                 .time_elapsed_with_children = section.time_elapsed_without_children,

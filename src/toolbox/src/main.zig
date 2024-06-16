@@ -1,6 +1,7 @@
 const std = @import("std");
 const toolbox = @import("toolbox.zig");
 const profiler = toolbox.profiler;
+const fiber = toolbox.fiber;
 
 pub const THIS_PLATFORM = toolbox.Platform.MacOS;
 pub const ENABLE_PROFILER = true; // !toolbox.IS_DEBUG;
@@ -11,6 +12,7 @@ pub fn main() anyerror!void {
         try run_tests();
         run_benchmarks();
     } else {
+        try run_tests();
         run_benchmarks();
     }
 }
@@ -456,7 +458,21 @@ fn run_tests() !void {
         dequeue_thread_1.join();
         dequeue_thread_2.join();
     }
+    //fibers
+    {
+        defer arena.reset();
+        fiber.init(arena, 4, toolbox.kb(64));
+        fiber.go(&fiber_test, .{});
+        fiber.go(&fiber_test, .{});
+        while (fiber.number_of_fibers_active() > 1) {}
+    }
     toolbox.println("\nAll tests passed!", .{});
+}
+fn fiber_test() void {
+    for (1..10) |i| {
+        toolbox.println("{}", .{i});
+        _ = fiber.yield();
+    }
 }
 fn concurrent_queue_enqueue_test_loop(ring_queue: *toolbox.SingleProducerMultiConsumerRingQueue(i64), running: *bool) void {
     for (0..10000) |u| {

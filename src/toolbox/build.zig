@@ -14,9 +14,9 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "toolbox_tests",
-        .root_source_file = .{
-            .path = "src/main.zig",
-        },
+        .root_source_file = b.path(
+            "src/main.zig",
+        ),
         .target = target,
         .optimize = mode,
     });
@@ -30,4 +30,14 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+    //clean step
+    {
+        const clean_step = b.step("clean", "Clean all artifacts");
+        const rm_zig_cache = b.addRemoveDirTree("zig-cache");
+        clean_step.dependOn(&rm_zig_cache.step);
+        const rm_dot_zig_cache = b.addRemoveDirTree(".zig-cache");
+        clean_step.dependOn(&rm_dot_zig_cache.step);
+        const rm_zig_out = b.addRemoveDirTree("zig-out");
+        clean_step.dependOn(&rm_zig_out.step);
+    }
 }
