@@ -7,7 +7,7 @@ pub const SCREEN_HEIGHT = 232;
 pub const FAST_LINE_1_NUM_SEGMENTS = 4;
 pub const FAST_LINE_2_NUM_SEGMENTS = 8;
 
-const level_data = @embedFile("levels.bin");
+const LEVEL_DATA = @embedFile("levels.bin");
 const z = std.mem.zeroes;
 
 //The game was designed around the fact that VBlank happend between
@@ -947,14 +947,171 @@ pub fn update(game_state: *GameState) void {
         //@ 	JMP GM.ENL
         next_frame(game_state);
     }
-    while (true) {
+    while (game_state.current_state == .InitWaveMotionObjects) {
         next_frame(game_state);
     }
 }
 
+//@;--------------
+//@;  draw gem row
+//@CT.GRD:
 fn draw_gem_row(game_state: *GameState) void {
-    //************TODO**************
-    _ = game_state;
+    //@	JSR BL.INI
+    initialize_block(game_state);
+    //@10$:
+    while (true) {
+        //@	JSR BL.IN2
+        initialize_block_2(game_state);
+
+        //@	LDA @CT.A2L(Y)
+        //@	AND #10
+        //@	IFNE			;  gem present
+        if (game_state.current_wave_data[game_state.castle_a2l] & 0x10 != 0) {
+            //@	 INC16 CE.COC		;  increment gem count
+            game_state.gem_count += 1;
+            //@	 JSR CT.SGD		;  draw it
+            {
+                //@;--------------------------
+                //@;  draw single gem
+                //@CT.SGD:
+
+                //@	 LDA @CT.A2L(Y)		;  set priority
+                //@	 JSR CL.PR
+                set_bitmap_values_of_faces(
+                    game_state.current_wave_data[game_state.castle_a2l],
+                    game_state,
+                );
+
+                //@	 LDA BL.HST
+                //@	 SUB #02
+                //@	 STA XB
+                //@	 LDA BL.VST
+                //@	 SUB BL.HEI
+                //@	 SUB #02
+                //@	 STA YB
+                var position = game_state.castle_block_position - V2{
+                    2,
+                    2 + game_state.castle_block_height,
+                };
+                //@	 TRAM FC.BVC VB
+                var color =
+                    color_value_to_color(game_state.face_color_values[4]); //this is FC.BVC
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+
+                //@	 DEC XB
+                position[0] -= 1;
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 DEC YB
+                //@	 DEC XB
+                position -= V2{ 1, 1 };
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 DEC YB
+                //@	 INC XB
+                position += V2{ 1, -1 };
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 INC XB
+                position[0] += 1;
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 INC XB
+                position[0] += 1;
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 INC YB
+                //@	 INC XB
+                position += V2{ 1, 1 };
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 INC YB
+                //@	 DEC XB
+                position += V2{ -1, 1 };
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 DEC YB
+                position[1] -= 1;
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 DEC XB
+                position[0] -= 1;
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	 DEC XB
+                position[0] -= 1;
+                //@	 LDA FC.BVS	;  white highlight
+                color =
+                    color_value_to_color(game_state.face_color_values[6]); //this is FC.BVS
+                //@	 STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = position,
+                    .color = color,
+                }, game_state);
+                //@	RTS
+            }
+            //@	ENDIF
+        }
+
+        //@	INC16 CT.ADL
+        game_state.castle_adl += 1;
+        //@	DEC CR.CNT
+        game_state.castle_block_count -= 1;
+        //@	BMI 20$
+        if (game_state.castle_block_count < 0) {
+            break;
+        }
+        //@	JSR BL.ADV
+        advance_block(game_state);
+        //@	JMP 10$
+    }
+    //@20$:
+    //@	INC16 CT.ADL
+    //@	INC16 CT.ADL
+    game_state.castle_adl += 2;
+
+    //@	RTS
 }
 
 //;  ----- state 2: start of wave
@@ -2386,7 +2543,7 @@ fn initialize_castle(game_state: *GameState) void {
     const wave_data_offset: usize = @intCast(game_state.wave_current * WAVE_DATA_SIZE);
     @memcpy(
         wave_data,
-        level_data[wave_data_offset .. wave_data_offset + WAVE_DATA_SIZE],
+        LEVEL_DATA[wave_data_offset .. wave_data_offset + WAVE_DATA_SIZE],
     );
 
     initialize_castle_row(game_state);
@@ -3211,12 +3368,12 @@ fn color_value_to_color(color_value: u8) Color {
 
     //Only top 4 bits are used
     return switch ((color_value >> 4) & 0xF) {
-        0x9, 0x7, 0x1 => .White,
+        0xF, 0x9, 0x7, 0x1 => .White,
         0xA, 0x2 => .Gray,
         0xB, 0x3 => .DarkGray,
         0xC, 0x4, 0 => .Black,
         0xD => .Red,
-        else => unreachable,
+        else => toolbox.panic("Unknown color value: {}", .{color_value}),
         //@0...0x9 => .White,
         //@0xA...0xC => .Gray,
         //@else => .Black,
@@ -3929,17 +4086,6 @@ fn add_draw_command(
     command: DrawCommand,
     game_state: *GameState,
 ) void {
-    //NOTE: 200 is arbitrarily chosen
-    const MAX_DRAW_COMMANDS_PER_FRAME = 200;
-    game_state.number_of_draw_commands_this_frame += 1;
-
-    if (game_state.number_of_draw_commands_this_frame >=
-        MAX_DRAW_COMMANDS_PER_FRAME)
-    {
-        next_frame(game_state);
-        game_state.number_of_draw_commands_this_frame = 0;
-    }
-
     const position = command.position;
     toolbox.assert(
         !(position[0] < 0 or position[0] >= SCREEN_WIDTH or
@@ -3959,6 +4105,23 @@ fn add_draw_command(
     game_state.draw_command_queue.enqueue_expecting_room(
         command_copy,
     );
+
+    //NOTE: 200 is arbitrarily chosen
+    const MAX_DRAW_COMMANDS_PER_FRAME = 200;
+    game_state.number_of_draw_commands_this_frame += 1;
+
+    if (game_state.number_of_draw_commands_this_frame >=
+        MAX_DRAW_COMMANDS_PER_FRAME)
+    {
+        flush_draw_command_queue(game_state);
+    }
+}
+
+fn flush_draw_command_queue(game_state: *GameState) void {
+    if (game_state.number_of_draw_commands_this_frame > 0) {
+        next_frame(game_state);
+        game_state.number_of_draw_commands_this_frame = 0;
+    }
 }
 
 fn to_isize(comptime n: comptime_int) isize {
