@@ -634,6 +634,8 @@ pub const GameState = struct {
         AttractModeMainLoop, //GM.AT -- GM.STA is set to 0xF
         StartGame, //GM.ST -- GM.STA is set to 1
         StartOfWave, //GM.SW -- GM.STA is set to 2
+        GamePlay, //GM.GP -- GM.STA is set to 3
+
         InitWaveMotionObjects, //GM.WO -- GM.STA is set to 0xA
     } = .DrawBackgroundAndCastle,
 
@@ -652,11 +654,13 @@ pub const GameState = struct {
     wave_long_term_difficulty: isize = 0, //WV.DF2
     wave_time: isize = 0, //WV.TIM
     wave_enable_warp: bool = false, //WV.WAR
+    wave_attract_mode_pointer: isize = 0, //WV.ATP
 
     wave_scroll_flag: enum { NoScroll, Right, Left, Up } = .NoScroll, //WV.SCF
 
     game_time: toolbox.Duration = .{}, //ST.TIM
     next_extra_life: isize = 0, //SC.NEL
+    prevent_color_transfer: bool = false, //WV.CIN
 
     //draw background state
     background_animation_time_since_last_scanline: toolbox.Duration = .{},
@@ -758,7 +762,7 @@ pub const GameState = struct {
 
     has_tunnel: bool = false, //CT.TUN
 
-    lives: isize = 0, //P1.LIV
+    lives: isize = 0, //P1.LIV or WV.LIV
     score: isize = 0, //P1.SCO
 
     frame: isize = 0, //FRAME
@@ -948,8 +952,91 @@ pub fn update(game_state: *GameState) void {
         next_frame(game_state);
     }
     while (game_state.current_state == .InitWaveMotionObjects) {
+        //@ JSR SC.LDS		; lives display
+        {
+            //@ ;------------------------------------------
+            //@ ;  lives and score display at start of wave
+            //@ SC.LDS:
+            //@ 	JSR SC.LD2
+            draw_lives(game_state);
+            //@ 	JSR SC.OT2
+            draw_score(game_state);
+
+            //@ 	RTS
+
+        }
+        //@ JSR EN.INP		; init entity position
+        init_all_entity_positions(game_state);
+
+        //@ JSR GM.GP0
+        {
+            //@ ;  ----- state 3:  game play
+            //@ GM.GP0:
+            //@     TRAI 3 GM.STA
+            game_state.current_state = .GamePlay;
+            //@ 	LDA #0
+            //@ 	STA CT.GMD
+            //NOTE: CT.GMD is "gem regeneration mode" which doesn't seem to be used?
+
+            //@ 	STA WV.TIM
+            //@ 	STA 1+WV.TIM
+            game_state.wave_time = 0;
+            //@ 	STA WV.ATP
+            game_state.wave_attract_mode_pointer = 0;
+            //@ 	STA WV.CIN		;  color inhibit
+            game_state.prevent_color_transfer = true;
+            //@ 	RTS
+        }
+        //@ JMP GM.ENL
         next_frame(game_state);
     }
+
+    while (game_state.current_state == .GamePlay) {
+        next_frame(game_state);
+    }
+}
+// SC.LD2:
+fn draw_lives(game_state: *GameState) void {
+    // 	TRAM WV.LIV TEMP5
+    // 	TRAI 0E8 AL.Y
+    // 	TRAI 010 AL.X
+    const starting_position = V2{ 0x10, 0xE8 };
+
+    // 	LDA #6*6
+    // 	JSR SC.ERA
+    screen_erase(starting_position, 6 * 6, game_state);
+
+    // ;  life symbol
+    // 	TRAI 25 SC.DIG
+
+    // 	LDY TEMP5
+    // 	DEY
+    // 	STY TEMP5
+    var lives = game_state.lives - 1;
+    var position = starting_position;
+    var suppress_zero = false;
+    var pixels_left_to_erase: isize = 0;
+    // 10$:
+    while (true) {
+        // 	DEC TEMP5
+        lives -= 1;
+        // 	BMI 20$
+        if (lives < 0) {
+            break;
+        }
+        // 	JSR AL.DGO
+        draw_digit(
+            0x25,
+            &position,
+            &suppress_zero,
+            &pixels_left_to_erase,
+            game_state,
+        );
+
+        // 	JMP 10$
+    }
+    // 20$:
+    // 	RTS
 }
 
 //@;--------------

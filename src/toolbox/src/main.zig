@@ -10,7 +10,7 @@ pub const panic = toolbox.panic_handler;
 pub fn main() anyerror!void {
     if (toolbox.IS_DEBUG) {
         try run_tests();
-        run_benchmarks();
+        // run_benchmarks();
     } else {
         try run_tests();
         run_benchmarks();
@@ -430,12 +430,12 @@ fn run_tests() !void {
     //concurrent ring queue single thread test
     {
         defer arena.reset();
-        var ring_queue = toolbox.SingleProducerMultiConsumerRingQueue(i64).init(8, arena);
+        var ring_queue = toolbox.MultiProducerMultiConsumerRingQueue(i64).init(8, arena);
         for (0..10) |u| {
             const i = @as(i64, @intCast(u));
             ring_queue.force_enqueue(i);
         }
-        var expected: i64 = 3;
+        var expected: i64 = 2;
         while (ring_queue.dequeue()) |got| {
             toolbox.assert(
                 expected == got,
@@ -445,18 +445,67 @@ fn run_tests() !void {
             expected += 1;
         }
     }
-    //concurrent ring queue multi thread test
+    //MultiProducerMultiConsumerRingQueue multi thread test
     {
         defer arena.reset();
-        var ring_queue = toolbox.SingleProducerMultiConsumerRingQueue(i64).init(8, arena);
-        var running = true;
-        const enqueue_thread = try std.Thread.spawn(.{}, concurrent_queue_enqueue_test_loop, .{ &ring_queue, &running });
-        const dequeue_thread_1 = try std.Thread.spawn(.{}, concurrent_queue_dequeue_test_loop, .{ &ring_queue, &running });
-        const dequeue_thread_2 = try std.Thread.spawn(.{}, concurrent_queue_dequeue_test_loop, .{ &ring_queue, &running });
 
-        enqueue_thread.join();
-        dequeue_thread_1.join();
-        dequeue_thread_2.join();
+        const TestData = struct {
+            n: i64,
+            thread_id: usize,
+        };
+        const NUM_PRODUCERS = 3;
+        const NUM_CONSUMERS = 10;
+        const MAX_VALUE_DEQUEUED = 0xFFFF;
+
+        var producers_running: isize = 0;
+        var producers: [NUM_PRODUCERS]std.Thread = undefined;
+        var consumers: [NUM_CONSUMERS]std.Thread = undefined;
+        var max_value_dequeued = [_]i64{0} ** NUM_PRODUCERS;
+        var ring_queue =
+            toolbox.MultiProducerMultiConsumerRingQueue(TestData).init(8, arena);
+
+        for (&producers, 0..) |*p, i| {
+            producers_running += 1;
+            p.* = try std.Thread.spawn(.{}, concurrent_queue_enqueue_test_loop, .{
+                &ring_queue,
+                &producers_running,
+                i,
+                MAX_VALUE_DEQUEUED,
+            });
+        }
+        for (&consumers) |*c| {
+            c.* = try std.Thread.spawn(.{}, concurrent_queue_dequeue_test_loop, .{
+                &ring_queue,
+                &producers_running,
+                &max_value_dequeued,
+                NUM_PRODUCERS,
+            });
+        }
+
+        for (producers) |p| {
+            p.join();
+        }
+        for (consumers) |c| {
+            c.join();
+        }
+        toolbox.assert(
+            ring_queue.used == 0,
+            "Expected no used ring queue entries.  Was: {}",
+            .{ring_queue.used},
+        );
+        toolbox.assert(
+            ring_queue.free == ring_queue.data.len,
+            "Expected all ring queue entries to be free.  Was: {}",
+            .{ring_queue.free},
+        );
+
+        for (max_value_dequeued, 0..) |n, i| {
+            toolbox.assert(
+                n == MAX_VALUE_DEQUEUED,
+                "Expected max value dequeued to be for thread {}: {X}, but was {X} ",
+                .{ i, MAX_VALUE_DEQUEUED, n },
+            );
+        }
     }
     //fibers
     {
@@ -474,25 +523,45 @@ fn fiber_test() void {
         _ = fiber.yield();
     }
 }
-fn concurrent_queue_enqueue_test_loop(ring_queue: *toolbox.SingleProducerMultiConsumerRingQueue(i64), running: *bool) void {
-    for (0..10000) |u| {
-        const i = @as(i64, @intCast(u));
-        while (!ring_queue.enqueue(i)) {
+fn concurrent_queue_enqueue_test_loop(
+    ring_queue: anytype,
+    producers_running: *isize,
+    thread_id: usize,
+    comptime max_value: i64,
+) void {
+    for (0..max_value + 1) |n| {
+        while (!ring_queue.enqueue(.{ .n = @intCast(n), .thread_id = thread_id })) {
             std.atomic.spinLoopHint();
         }
     }
-    running.* = false;
+    _ = @atomicRmw(isize, producers_running, .Sub, 1, .monotonic);
 }
-fn concurrent_queue_dequeue_test_loop(ring_queue: *toolbox.SingleProducerMultiConsumerRingQueue(i64), running: *bool) void {
-    var last_actual: i64 = -1;
-    while (running.*) {
-        if (ring_queue.dequeue()) |actual| {
+fn concurrent_queue_dequeue_test_loop(
+    ring_queue: anytype,
+    producers_running: *isize,
+    max_value_dequeued: []i64,
+    comptime num_producers: usize,
+) void {
+    var last_actual = [_]i64{-1} ** num_producers;
+
+    while (@atomicLoad(isize, producers_running, .monotonic) > 0) {
+        if (ring_queue.dequeue()) |test_data| {
+            const thread_id: usize = test_data.thread_id;
+            const actual = test_data.n;
+
             toolbox.assert(
-                actual > last_actual,
-                "Unexpected ring queue value.  Expected greater than: {}, Was: {}",
-                .{ last_actual, actual },
+                actual > last_actual[thread_id],
+                \\Unexpected ring queue value.  Expected greater than: {}, Was: {}, Thread: {} \n
+                \\used: {}, free: {}, rcursor: {}, wcursor: {}, reserved_rcursor: {}, reserved_wcursor: {} 
+            ,
+                .{
+                    last_actual[thread_id] & 0xFFFF_FFFF, actual & 0xFFFF_FFFF,        thread_id,
+                    ring_queue.used,                      ring_queue.free,             ring_queue.rcursor,
+                    ring_queue.wcursor,                   ring_queue.reserved_rcursor, ring_queue.reserved_wcursor,
+                },
             );
-            last_actual = actual;
+            last_actual[thread_id] = actual;
+            _ = @atomicRmw(i64, &max_value_dequeued[thread_id], .Max, actual, .acq_rel);
         } else {
             std.atomic.spinLoopHint();
         }

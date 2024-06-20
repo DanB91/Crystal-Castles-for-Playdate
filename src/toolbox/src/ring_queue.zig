@@ -1,5 +1,6 @@
 const toolbox = @import("toolbox.zig");
 
+const Common = @This();
 //
 //[] rcursor = 0, wcursor = 0, len = 0, max = 3
 //[1] rcursor = 0, wcursor = 1, len = 1, max =3
@@ -108,11 +109,15 @@ pub fn RingQueue(comptime T: type) type {
         }
     };
 }
-pub fn SingleProducerMultiConsumerRingQueue(comptime T: type) type {
+pub fn MultiProducerMultiConsumerRingQueue(comptime T: type) type {
     return struct {
         data: []T,
         rcursor: usize,
         wcursor: usize,
+        reserved_wcursor: usize,
+        reserved_rcursor: usize,
+        used: isize,
+        free: isize,
 
         const Self = @This();
 
@@ -128,59 +133,84 @@ pub fn SingleProducerMultiConsumerRingQueue(comptime T: type) type {
                 .data = arena.push_slice(T, len),
                 .rcursor = 0,
                 .wcursor = 0,
+                .reserved_wcursor = 0,
+                .reserved_rcursor = 0,
+                .used = 0,
+                .free = @intCast(len),
             };
         }
         pub inline fn is_empty(self: Self) bool {
-            return @atomicLoad(usize, &self.rcursor, .monotonic) ==
-                @atomicLoad(usize, &self.wcursor, .monotonic);
+            return @atomicLoad(usize, &self.free, .acquire) == self.data.len;
         }
         pub inline fn is_full(self: Self) bool {
-            var tmp_cursor = @atomicLoad(usize, &self.wcursor, .monotonic);
-            next_ring_index(&tmp_cursor, self.data.len);
-            return tmp_cursor == @atomicLoad(usize, &self.rcursor, .monotonic);
+            return @atomicLoad(usize, &self.used, .acquire) == self.data.len;
         }
         pub fn enqueue(self: *Self, value: T) bool {
-            const rcursor = @atomicLoad(usize, &self.rcursor, .monotonic);
-            const wcursor = @atomicLoad(usize, &self.wcursor, .acquire);
-            var next_wcursor = wcursor;
-            next_ring_index(&next_wcursor, self.data.len);
-            if (rcursor == next_wcursor) {
-                return false;
+            const NUMBER_OF_ITEMS = 1;
+            while (true) {
+                const wcursor = @atomicLoad(usize, &self.wcursor, .acquire);
+                if (@atomicLoad(isize, &self.free, .monotonic) < NUMBER_OF_ITEMS) {
+                    return false;
+                }
+                var next_wcursor = wcursor;
+                next_ring_index(&next_wcursor, self.data.len);
+                _ = @atomicRmw(isize, &self.free, .Sub, NUMBER_OF_ITEMS, .monotonic);
+                if (@cmpxchgStrong(
+                    usize,
+                    &self.reserved_wcursor,
+                    wcursor,
+                    next_wcursor,
+                    .acquire,
+                    .monotonic,
+                ) == null) {
+                    self.data[wcursor] = value;
+                    while (@atomicLoad(usize, &self.wcursor, .acquire) != wcursor) {}
+                    _ = @atomicStore(usize, &self.wcursor, next_wcursor, .release);
+                    _ = @atomicRmw(isize, &self.used, .Add, NUMBER_OF_ITEMS, .monotonic);
+
+                    return true;
+                } else {
+                    _ = @atomicRmw(isize, &self.free, .Add, NUMBER_OF_ITEMS, .monotonic);
+                }
             }
-            self.data[wcursor] = value;
-            @atomicStore(usize, &self.wcursor, next_wcursor, .release);
-            return true;
         }
+
         //In order to support force_enqueue this we must support multiple consumers
         //since it we can call dequeue and it is assumed the producer is on a separate thread
         pub fn force_enqueue(self: *Self, value: T) void {
             if (!self.enqueue(value)) {
                 _ = self.dequeue();
                 if (!self.enqueue(value)) {
-                    toolbox.panic("Could not force enqueue after enqueuing! Ensure only 1 thread is enqueueing.", .{});
+                    toolbox.panic("Could not force enqueue after dequeuing! Ensure only 1 thread is enqueueing.", .{});
                 }
             }
         }
         pub fn dequeue(self: *Self) ?T {
+            const NUMBER_OF_ITEMS = 1;
             while (true) {
                 const rcursor = @atomicLoad(usize, &self.rcursor, .acquire);
-                const wcursor = @atomicLoad(usize, &self.wcursor, .monotonic);
-                if (rcursor == wcursor) {
+                if (@atomicLoad(isize, &self.used, .monotonic) < NUMBER_OF_ITEMS) {
                     return null;
                 }
                 var next_rcursor = rcursor;
                 next_ring_index(&next_rcursor, self.data.len);
-
-                const ret = self.data[rcursor];
-                if (@cmpxchgWeak(
+                _ = @atomicRmw(isize, &self.used, .Sub, NUMBER_OF_ITEMS, .monotonic);
+                if (@cmpxchgStrong(
                     usize,
-                    &self.rcursor,
+                    &self.reserved_rcursor,
                     rcursor,
                     next_rcursor,
-                    .release,
+                    .acquire,
                     .monotonic,
                 ) == null) {
+                    const ret = self.data[rcursor];
+                    while (@atomicLoad(usize, &self.rcursor, .acquire) != rcursor) {}
+                    @atomicStore(usize, &self.rcursor, next_rcursor, .release);
+                    _ = @atomicRmw(isize, &self.free, .Add, NUMBER_OF_ITEMS, .monotonic);
+
                     return ret;
+                } else {
+                    _ = @atomicRmw(isize, &self.used, .Add, NUMBER_OF_ITEMS, .monotonic);
                 }
             }
         }
