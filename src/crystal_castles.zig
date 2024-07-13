@@ -308,7 +308,7 @@ const WORDS = [_][]const u8{
     "BEAR",
     "AT[PC",
     "COPYRIGHT",
-    "8@?:[ATARI",
+    "1983[ATARI",
     "ALL[RIGHTS",
     "RESERVED",
     ":",
@@ -510,6 +510,13 @@ const EATING_TIMES = [_]isize{
     8,    0x10,
 };
 
+//@ ;   swarm speed
+//@ DF.SWS:
+const SWARM_SPEEDS = [_]isize{
+    0x1, 0x3, 0x6, 0x3, 0x5,
+    0x6, 0x4, 0x8, 0x8, 0xC,
+};
+
 const CREATURE_INITIAL_POSITIONS = [_]V2{
     .{ 0x2, 0xC },   .{ 0x3, 0x14 },  .{ 0x4, 0x14 },
     .{ 0x5, 0x14 },  .{ 0x6, 0x14 },  .{ 0x7, 0x14 },
@@ -631,15 +638,18 @@ pub const GameState = struct {
 
     current_state: enum {
         DrawBackgroundAndCastle, //GM.IN -- GM.STA is set to 0
-        AttractModeMainLoop, //GM.AT -- GM.STA is set to 0xF
         StartGame, //GM.ST -- GM.STA is set to 1
         StartOfWave, //GM.SW -- GM.STA is set to 2
         GamePlay, //GM.GP -- GM.STA is set to 3
 
+        EndOfWave, //GM.EW -- GM.STA is set to 5
+
         InitWaveMotionObjects, //GM.WO -- GM.STA is set to 0xA
+        AttractModeMainLoop, //GM.AT -- GM.STA is set to 0xF
     } = .DrawBackgroundAndCastle,
 
     is_in_attract_mode: bool = false, //ATRACT
+    attract_mode_player_position_index: usize = 0, //WV.ATP
 
     //wave specific state
     wave_offset: isize = 0, //WV.OFF
@@ -708,16 +718,18 @@ pub const GameState = struct {
     face_color_values: [7]u8 = undefined, //FC.BV
     face3_color_value_hidden_or_not: u8 = 0, //CT.BV3
 
+    entity_end_of_wave_mode: bool = false, //EN.EWM
     entity_is_warping: bool = false, //EN.WRF	;  warp flag
     entity_in_tunnel: EntityField(bool) = z(EntityField(bool)), //EN.TFL
     entity_is_dead: EntityField(bool) = z(EntityField(bool)), //EN.DEA
     entity_blanking_flag: EntityField(bool) = z(EntityField(bool)), //EN.BLK
+
     //TODO: figure out the different life mode states
-    entity_life_mode: EntityField(isize) = z(EntityField(isize)), //EN.LMD
+    entity_life_mode: EntityField(LifeMode) = z(EntityField(LifeMode)), //EN.LMD
     //EN.XO1-EN.XO4, EN.YO1-EN.YO4
     entity_motion_object_offsets: EntityField([MOTION_OBJECTS_PER_ENTITY]V2) =
         z(EntityField([MOTION_OBJECTS_PER_ENTITY]V2)),
-    entity_state: EntityField(isize) = z(EntityField(isize)), //EN.STA
+    entity_state: EntityField(EntityState) = z(EntityField(EntityState)), //EN.STA
     entity_playfield_position: EntityField(V2) = z(EntityField(V2)), //EN.MX and EN.MY
     entity_position: EntityField(V2) = z(EntityField(V2)), //EN.X and EN.Y
     entity_fine_position: EntityField(V2) = z(EntityField(V2)), //EN.IX and EN.IY
@@ -730,40 +742,48 @@ pub const GameState = struct {
         z(EntityField([MOTION_OBJECTS_PER_ENTITY]isize)),
     entity_height: EntityField(isize) = z(EntityField(isize)), //EN.HEI
     entity_animation_direction: EntityField(isize) = z(EntityField(isize)), //EN.AND
-    entity_playfield_offset: EntityField(usize) = z(EntityField(usize)), //EN.MAT
-    //TODO figure out why we need to playfield offset fields
-    entity_playfield_offset2: EntityField(usize) = z(EntityField(usize)), //EN.MA2
+    entity_playfield_square_height_index: EntityField(usize) = z(EntityField(usize)), //EN.MAT
+    entity_playfield_square_flags_index: EntityField(usize) = z(EntityField(usize)), //EN.MA2
     entity_animation: EntityField(isize) = z(EntityField(isize)), //EN.ANV
     //@ ;  direction 0<=EN.DR<=3
     entity_direction: EntityField(isize) = z(EntityField(isize)), //EN.DR
     //TODO: don't know what HOF means.  maybe "horizontal_offset?"
     entity_hof: EntityField(isize) = z(EntityField(isize)), //EN.HOF
     entity_delay: EntityField(isize) = z(EntityField(isize)), //EN.DEL
-    entity_slow_speed: EntityField(isize) = z(EntityField(isize)), //EN.DEL
-    entity_fast_speed: EntityField(isize) = z(EntityField(isize)), //EN.DEL
+    entity_slow_speed: EntityField(isize) = z(EntityField(isize)), //EN.SP1
+    entity_fast_speed: EntityField(isize) = z(EntityField(isize)), //EN.SP2
+    entity_wall_collision: EntityField(bool) = z(EntityField(bool)), //EN.WCF
+    entity_new_square_flag: EntityField(bool) = z(EntityField(bool)), //EN.NSF
 
-    entity_collition_delay: isize = 0, //EN.CDL
+    entity_collision_delay: isize = 0, //EN.CDL
     entity_jump_delay: isize = 0, //EN.JDL
     entity_jump_flag: bool = false, //EN.JFL
+    entity_movement_delta: V2 = ZV2, //EN.XD and EN.YD
+    jump_button_pressed: bool = false, //EN.JBP
+
     gem_eater_max_speed: isize = 0, //EN.MSG
     crystal_monster_speed: isize = 0, //EN.CMS
 
     general_start_delay: isize = 0, //EN.GDL
 
-    gem_count: isize = 0, //CE.COC
+    general_purpose_1: isize = 0, //EN.GP1
+    general_purpose_2: isize = 0, //EN.GP2
+
+    wave_gems_left: isize = 0, //CE.COC
+    entity_that_took_last_gem: usize = 0, //EN.LDF
 
     tune_table_keys: [4]isize =
         .{ 0, 0, 0, 0 }, //RS.KEY
 
     //SC.GEM	;  gem counter
-    gem_counter: isize = 0,
+    gems_collected: isize = 0,
 
     main_loop_delay: isize = 0, //MN.DEL
 
     has_tunnel: bool = false, //CT.TUN
 
     lives: isize = 0, //P1.LIV or WV.LIV
-    score: isize = 0, //P1.SCO
+    score: isize = 0, //P1.SCO or SC.SCO
 
     frame: isize = 0, //FRAME
     number_of_credits: isize = 0, //$$CRDT or $CNCT
@@ -780,6 +800,29 @@ pub const GameState = struct {
     fn EntityField(comptime T: type) type {
         return [MAX_NUMBER_OF_ENTITIES]T;
     }
+};
+const EntityState = enum(isize) {
+    PlayerOrTree = 0,
+    PlungerMovingTowardsWall = 1,
+    PlungerFollowsWall = 2,
+    PlungerEating = 3,
+    NotUsed = 4,
+    PlungerStunned = 5,
+    Witch = 6,
+    Honey = 7,
+    Swarm = 8,
+    CrystalBall = 9,
+    Hat = 10,
+    Cauldron = 11,
+    Skeleton = 12,
+    ScoreDisplay = 13,
+    Ghost = 14,
+};
+const LifeMode = enum(isize) {
+    Alive = 0,
+    Dying = 1,
+    Spawning = 2,
+    Dead = 3,
 };
 const Scoreboard = struct {
     //@        HFSIZ=250.
@@ -855,40 +898,8 @@ pub fn update(game_state: *GameState) void {
         }
         advance_castle_row(game_state);
     }
-    //@ ;---  state 15 attract mode
-    //@ GM.AT0:
-    {
-        //@ TRAI 0F GM.STA
-        game_state.current_state = .AttractModeMainLoop;
 
-        //@JSR AL.BER
-        erase_board(game_state);
-        //@LDA #10
-        //@JSR MS.DRW		;  credits
-        draw_message(0x10, game_state);
-
-        //TODO:
-        //@LDA WV.WAR
-        //@IFNE
-        //@ LDA #1A
-        //@ JSR MS.DRW		;  warp message
-        //@ TRAI 0C3 AL.X
-        //@ TRAI 3B AL.Y
-        //@ TRAM SC.HS1+HFSIZ-1 SC.NM
-        //@ TRAM SC.HS2+HFSIZ-1 SC.NM+1
-        //@ TRAM SC.HS3+HFSIZ-1 SC.NM+2
-        //@ JSR SC.NDS		;  display high score
-        //@ LDA #10	        ; wait 40 seconds before
-        //@ELSE			; deactivating warp
-        //@ LDA #1
-
-        //NOTE it is actually 0x200, because the first decrement
-        //@    doesn't affect the high byte
-        game_state.main_loop_delay = 0x200;
-        //@ENDIF
-        //@STA 1+MN.DEL
-
-    }
+    restart_attract_mode(game_state);
 
     while (game_state.current_state == .AttractModeMainLoop) {
         update_attract_mode(game_state);
@@ -910,7 +921,6 @@ pub fn update(game_state: *GameState) void {
         //@JSR GM.SW0
         start_of_wave(game_state);
         //@JMP GM.ENL
-        next_frame(game_state);
     }
     //@ GM.SW:
     while (game_state.current_state == .StartOfWave) {
@@ -949,7 +959,6 @@ pub fn update(game_state: *GameState) void {
         }
 
         //@ 	JMP GM.ENL
-        next_frame(game_state);
     }
     while (game_state.current_state == .InitWaveMotionObjects) {
         //@ JSR SC.LDS		; lives display
@@ -988,12 +997,2206 @@ pub fn update(game_state: *GameState) void {
             //@ 	RTS
         }
         //@ JMP GM.ENL
-        next_frame(game_state);
     }
 
+    game_state.debug_should_not_yield = false;
+
     while (game_state.current_state == .GamePlay) {
-        next_frame(game_state);
+        //@  JSR MN.FRA		;  frame handler
+        frame_handler(game_state);
+
+        //@ 	JSR EC.UPD		; elevator control
+        update_elevators(game_state);
+        //@ 	JSR EN.UPD		; EN update
+        update_entities(game_state);
+        //@ 	JSR MT.UPD		; motion objects
+        update_motion_objects(game_state);
+
+        //@ ;  exit attract mode if coin has dropped
+        //@ 	LDA ATRACT
+        //@ 	IFEQ
+        if (game_state.is_in_attract_mode) {
+            //@ 	 LDA $$CRDT
+            //@ 	 IFNE
+            if (game_state.number_of_credits > 0) {
+                //@ 	  JSR GM.AT0
+                restart_attract_mode(game_state);
+                //@ 	 ENDIF
+                //@ 	ENDIF
+            }
+        }
+
+        //@ 	JMP GM.ENL
     }
+}
+//@ ;---  state 15 attract mode
+//@ GM.AT0:
+fn restart_attract_mode(game_state: *GameState) void {
+    //@ TRAI 0F GM.STA
+    game_state.current_state = .AttractModeMainLoop;
+
+    //@JSR AL.BER
+    erase_board(game_state);
+    //@LDA #10
+    //@JSR MS.DRW		;  credits
+    draw_message(0x10, game_state);
+
+    //TODO:
+    //@LDA WV.WAR
+    //@IFNE
+    //@ LDA #1A
+    //@ JSR MS.DRW		;  warp message
+    //@ TRAI 0C3 AL.X
+    //@ TRAI 3B AL.Y
+    //@ TRAM SC.HS1+HFSIZ-1 SC.NM
+    //@ TRAM SC.HS2+HFSIZ-1 SC.NM+1
+    //@ TRAM SC.HS3+HFSIZ-1 SC.NM+2
+    //@ JSR SC.NDS		;  display high score
+    //@ LDA #10	        ; wait 40 seconds before
+    //@ELSE			; deactivating warp
+    //@ LDA #1
+
+    //NOTE it is actually 0x200, because the first decrement
+    //@    doesn't affect the high byte
+    game_state.main_loop_delay = 0x200;
+    //@ENDIF
+    //@STA 1+MN.DEL
+
+}
+//EN.UPD
+fn update_entities(game_state: *GameState) void {
+    //@     ;---------------------------------------------
+    //@ ; update EN
+    //@ EN.UPD:
+    //@ ;  background sound
+    {
+        //TODO: sound
+
+        //@ 	LDA FRAME
+        //@ 	AND #7F
+        //@ 	IFEQ
+        //@ 	 LDA SN.GFL
+        //@ 	 IFEQ
+        //@ 	  LDA 1+WV.TIM
+        //@ 	  CMP #0C
+        //@ 	  IFCC
+        //@ 	  STA RS.KEY+1
+        //@ 	  LDA #15
+        //@ 	  JSR MN.SN1
+        //@ 	  ENDIF
+        //@ 	 ENDIF
+        //@ 	 TRAI 0 SN.GFL
+        //@ 	ENDIF
+    }
+
+    //@ ;  trackball update
+    {
+        //TODO: player input
+
+        //@ 	JSR TR.DEL
+
+        //@ ; calculate CE deltas given TR deltas
+
+        //@    ; truncate TR deltas, store in CE deltas
+        //@ 	TRAI 9 TEMP1
+        //@ 	LDA TR.XD
+        //@ 	JSR GP.TRC
+        //@ 	STA CE.XD
+        //@ 	LDA TR.YD
+        //@ 	JSR GP.TRC
+        //@ 	NEGA		;  invert delta Y
+        //@ 	STA CE.YD
+
+        //@    ;  rotate
+        //@ 	LDA CE.XD	; calculate new CE.YD
+        //@ 	ASL
+        //@ 	ADD CE.YD
+        //@ 	STA CE.TMP	; store in temp
+
+        //@ 	LDA CE.YD	; calculate new CE.XD
+        //@ 	ASL
+        //@ 	SUB CE.XD
+        //@ 	STA CE.XD	; and store
+        //@ 	TRAM CE.TMP CE.YD	; also store CE.YD
+
+        //@ ;  truncate again
+        //@ 	TRAI 0F TEMP1
+        //@ 	LDA CE.XD
+        //@ 	JSR GP.TRC
+        //@ 	STA CE.XD
+        //@ 	LDA CE.YD
+        //@ 	JSR GP.TRC
+        //@ 	STA CE.YD
+
+        //@ ;    jumping
+        //@ 	LDA EN.JFL
+        //@ 	IFNE
+        //@ 	 LDA EN.JDL
+        //@ 	 CMP #1F
+        //@ 	 IFEQ
+        //@ 	  LDA EN.IX
+        //@ 	  ASLS 3
+        //@ 	  STA EN.JPX
+        //@ 	  LDA EN.IY
+        //@ 	  ASLS 3
+        //@ 	  STA EN.JPY
+        //@ 	 ENDIF
+        //@ 	 LDA EN.JDL
+        //@ 	 CMP #1E
+        //@ 	 IFEQ
+        //@ 	  LDA EN.IX
+        //@ 	  ASLS 3
+        //@ 	  SUB EN.JPX
+        //@ 	  DIV8
+        //@ 	  STA EN.JPX
+
+        //@ 	  LDA EN.IY
+        //@ 	  ASLS 3
+        //@ 	  SUB EN.JPY
+        //@ 	  DIV8
+        //@ 	  STA EN.JPY
+        //@ 	 ENDIF
+        //@ 	 LDA EN.JDL
+        //@ 	 CMP #1E
+        //@ 	 IFCC
+        //@ 	  TRAM EN.JPX CE.XD
+        //@ 	  TRAM EN.JPY CE.YD
+        //@ 	 ENDIF
+        //@ 	ENDIF
+    }
+
+    //@ ;     end of wave calculation
+    //@ 	JSR EN.EWC
+    end_of_wave_calculation(game_state);
+
+    //@ 	LDA GM.STA
+    //@ 	CMP #5
+    //@ 	IFEQ
+    if (game_state.current_state == .EndOfWave) {
+        //@ 	 RTS
+        return;
+        //@ 	ENDIF
+    }
+
+    //@ 	JSR EN.PLU	; player update
+    update_player(game_state);
+
+    //@ 	LDA EN.GDL
+    //@ 	IFNE
+    if (game_state.general_start_delay != 0) {
+        //@ 	 DEC EN.GDL
+        game_state.general_start_delay -= 1;
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA EN.CDL	;  collision delay
+    //@ 	IFNE
+    if (game_state.entity_collision_delay != 0) {
+        //@ 	 DEC EN.CDL
+        game_state.entity_collision_delay -= 1;
+        //@ 	ENDIF
+    }
+
+    //@ 	LDX #0
+    //@ 	BEGIN
+    for (0..MAX_NUMBER_OF_ENTITIES) |entity| {
+        //@ 	 TXA
+        //@ 	 IFNE
+        if (entity != PLAYER_ENTITY) {
+            //@ 	  LDA EN.LMD	;  if player alive
+            //@ 	  IFEQ
+            if (game_state.entity_life_mode[PLAYER_ENTITY] == .Alive) {
+                //@ 	   JSR EN.COL	; collision detect
+                detect_collision(entity, game_state);
+                //@ 	  ENDIF
+            }
+            //@ 	 ENDIF
+        }
+
+        //@ 	 JSR EN.UP2	; update EN
+        //@ ;----------------------
+        //@ ;  update EN
+        //@ EN.UP2:
+        {
+            //@ 	TR16AM EN.MAT(X) EZ.MAT
+            var height_index = game_state.entity_playfield_square_height_index[entity];
+            const height = game_state.current_wave_data[height_index];
+            //@ 	TR16AM EN.MA2(X) EZ.MA2
+            //TODO: figure out what these flags are
+            var flags_index = game_state.entity_playfield_square_flags_index[entity];
+            const flags = game_state.current_wave_data[flags_index];
+
+            //@ ;  if not in tunnel, update height
+            //@ 	LDY #0
+            //@ 	LDA @EZ.MA2(Y)
+            //@ 	AND #20
+            //@ 	IFEQ
+            if (flags & 0x20 == 0) {
+                //@ 	 TRAM @EZ.MAT(Y) EN.HEI(X)
+                game_state.entity_height[entity] = height;
+            }
+            //@ 	ENDIF
+
+            //@ 	JSR EN.MOV
+            move_entity(
+                entity,
+                game_state,
+                &height_index,
+                &flags_index,
+            );
+
+            //@ 	TR16AM EZ.MAT EN.MAT(X)
+            game_state.entity_playfield_square_height_index[entity] = height_index;
+            //@ 	TR16AM EZ.MA2 EN.MA2(X)
+            game_state.entity_playfield_square_flags_index[entity] = flags_index;
+
+            //@ 	RTS
+        }
+        //@ 	 JSR EN.OUT
+        output_entity(entity, game_state);
+
+        //@ 	INXS 2
+        //@ 	CPX EN.NUM
+        //@ 	PLEND
+    }
+
+    //@ 	RTS
+
+}
+//EN.MOV
+fn move_entity(
+    entity: usize,
+    game_state: *GameState,
+    out_square_height_index: *usize,
+    out_square_flags_index: *usize,
+) void {
+    const ATTRACT_MODE_PLAYER_DELTAS = [_]V2{
+        //@ AT.XD:	.BYTE 0FD,0,0FB,4,5,0,2,3
+        //@ 	.BYTE 0,0FF,0FD,0,2,3,4,5
+        //@ AT.YD:	.BYTE 0FD,0,0,0,0,0,0,2
+        //@ 	.BYTE 3,4,0,2,5,0F9,2,0
+        .{ -3, -3 }, .{ 0, 0 },  .{ -5, 0 }, .{ 4, 0 }, .{ 5, 0 }, .{ 0, 0 },  .{ 2, 0 }, .{ 3, 2 },
+        .{ 0, 3 },   .{ -1, 4 }, .{ -5, 0 }, .{ 0, 2 }, .{ 2, 5 }, .{ 3, -5 }, .{ 4, 2 }, .{ 5, 0 },
+    };
+    //@     ;---------
+    //@ ;  move EN
+    //@ EN.MOV:
+    //@ 	TXA
+    //@ 	IFEQ
+    //@ ;  detect gems only if player not jumping
+    //@ 	LDA EN.JFL
+    //@ 	BNE 10$
+    //@ 	ENDIF
+    if (entity == PLAYER_ENTITY and !game_state.entity_jump_flag) {
+        //@ 	JSR EN.CDT
+        detect_gem(entity, game_state);
+        //@ 10$:
+    }
+
+    //@ 	JSR EN.STC	;  state calculation
+    entity_state_calculation(entity, game_state);
+    //@ 	JSR EN.LMC	;  life mode calculation
+    entity_life_mode_calculation(entity, game_state);
+
+    //@ 	LDA EN.LMD
+    //@ 	IFEQ		;  if player alive
+    //@ 	 TXA
+    //@ 	 IFEQ
+    if (entity == PLAYER_ENTITY and
+        game_state.entity_life_mode[entity] == .Alive)
+    {
+        //@ 	  LDA ATRACT
+        //@ 	  IFNE
+        if (!game_state.is_in_attract_mode) {
+            //*****TODO******
+            unreachable;
+            //@ 	   TRAM CE.XD EN.XD	; trackball inputs
+            //@ 	   TRAM CE.YD EN.YD
+        }
+        //@ 	  ELSE
+        else {
+            //@ 	   LDA WV.TIM
+            //@ 	   AND #3F		;  once per second
+            //@ 	   IFEQ
+            if (game_state.wave_time & 0x3F == 0) {
+                //@ 	    INC WV.ATP	;  increment atract mode pointer
+                game_state.attract_mode_player_position_index += 1;
+                //@ 	   ENDIF
+            }
+            //@ 	   LDA WV.ATP
+            //@ 	   CMP #0F
+            //@ 	   IFCS
+            if (game_state.attract_mode_player_position_index >= ATTRACT_MODE_PLAYER_DELTAS.len) {
+                //@ 	    TRAI 0F WV.ATP
+                game_state.attract_mode_player_position_index = ATTRACT_MODE_PLAYER_DELTAS.len - 1;
+                //@ 	   ENDIF
+            }
+            //@ 	   TAY
+            //@ 	   TRAM AT.XD(Y) EN.XD
+            //@ 	   TRAM AT.YD(Y) EN.YD
+            game_state.entity_movement_delta =
+                ATTRACT_MODE_PLAYER_DELTAS[game_state.attract_mode_player_position_index];
+            //@ 	  ENDIF
+        }
+        //@ 	 ENDIF
+        //@ 	ELSE		;  if player dead, everything stops
+    } else {
+        //@ 	 TRAI 0 EN.XD
+        //@ 	 TRAI 0 EN.YD
+        //@ 	ENDIF
+        game_state.entity_movement_delta = ZV2;
+    }
+
+    //@ 	LDA EN.GDL
+    //@ 	IFNE
+    if (game_state.general_start_delay != 0) {
+        //@ 	  TXA
+        //@ 	  IFNE
+        if (entity != PLAYER_ENTITY) {
+            //@ 	  TRAI 0 EN.XD		;  creature freeze
+            //@ 	  STA EN.YD
+            game_state.entity_movement_delta = ZV2;
+        }
+        //@ 	  ENDIF
+        //@ 	ENDIF
+    }
+
+    //@ 50$:
+    //@ 	CPX #0
+    //@ 	IFEQ
+    if (entity == PLAYER_ENTITY) {
+        //@ 	 JSR EN.PUP	;  player animation
+        animate_player(game_state);
+        //@ 	ENDIF
+    }
+
+    //@ ;  collision with playfield
+    //@ 	TRAI 0 EN.WCF(X)	; no wall collision
+    game_state.entity_wall_collision[entity] = false;
+    //@ 	STA    EN.NSF(X)	; no new square
+    game_state.entity_new_square_flag[entity] = false;
+
+    //@ 	LDA EN.IX(X)
+    //@ 	ADD EN.XD
+    //@ 	STA EN.IX(X)
+    //@ 	LDY EN.XD
+    //@ 	IFPL
+    //@ 	 JSR EN.CXI
+    //@ 	ELSE
+    //@ 	 JSR EN.CXD
+    //@ 	ENDIF
+
+    //@ 	LDA EN.IY(X)
+    //@ 	ADD EN.YD
+    //@ 	STA EN.IY(X)
+    //@ 	LDY EN.YD
+    //@ 	IFPL
+    //@ 	 JSR EN.CYI
+    //@ 	ELSE
+    //@ 	 JSR EN.CYD
+    //@ 	ENDIF
+    game_state.entity_fine_position[entity] += game_state.entity_movement_delta;
+    if (game_state.entity_movement_delta[0] >= 0) {
+        if (game_state.entity_fine_position[entity][0] >= 0x14) {
+            const square_height_index = out_square_height_index.* + PLAYFIELD_HEIGHT;
+            const result = check_wall_collision(
+                square_height_index,
+                entity,
+                game_state,
+            );
+            if (result.did_collide) {
+                game_state.entity_fine_position[entity][0] = 0x13;
+                game_state.entity_wall_collision[entity] = true;
+            } else {
+                //@ ;--------------------------
+                //@ ; increment in  X-direction
+                //@ EN.XIN:
+                //@ 	LDA EN.IX(X)
+                //@ 	SUB #20
+                //@ 	BMI 40$
+                if (game_state.entity_fine_position[entity][0] - 0x20 < 0) {
+
+                    //@ 	STA EN.IX(X)
+                    game_state.entity_fine_position[entity][0] -= 0x20;
+
+                    //@ 	LDA EN.HP(X)
+                    //@ 	SUB #04
+                    //@ 	STA EN.HP(X)
+
+                    //@ 	LDA EN.VP(X)
+                    //@ 	SUB #04
+                    //@ 	STA EN.VP(X)
+                    game_state.entity_picture_position[entity] += .{ -4, -4 };
+
+                    //@ 	INC EN.MX(X)
+                    game_state.entity_playfield_position[entity][0] += 1;
+
+                    //@ 	JSR EN.MUP		;  new square
+                    move_entity_to_new_square(
+                        entity,
+                        game_state,
+                        result.in_tunnel,
+                        square_height_index,
+                        out_square_height_index,
+                        out_square_flags_index,
+                    );
+                    //@ 	TRAI 0 EN.AND(X)	;  animation direction
+                    game_state.entity_animation[entity] = 0;
+                    //@ 40$:
+                    //@ 	RTS
+                }
+            }
+        }
+    } else {
+        if (game_state.entity_fine_position[entity][0] < 0xC) {
+            const square_height_index = out_square_height_index.* - PLAYFIELD_HEIGHT;
+            const result = check_wall_collision(
+                square_height_index,
+                entity,
+                game_state,
+            );
+            if (result.did_collide) {
+                game_state.entity_fine_position[entity][0] = 0xC;
+                game_state.entity_wall_collision[entity] = true;
+            } else {
+                //@ ;--------------------------
+                //@ ;  decrement in X direction
+                //@ EN.XDE:
+                //@ 	LDA EN.IX(X)
+                //@ 	BPL 40$
+                if (game_state.entity_fine_position[entity][0] < 0) {
+                    //@ 	ADD #20
+                    //@ 	STA EN.IX(X)
+                    game_state.entity_fine_position[entity][0] += 0x20;
+
+                    //@ 	LDA EN.HP(X)
+                    //@ 	ADD #04
+                    //@ 	STA EN.HP(X)
+
+                    //@ 	LDA EN.VP(X)
+                    //@ 	ADD #04
+                    //@ 	STA EN.VP(X)
+                    game_state.entity_picture_position[entity] += .{ 4, 4 };
+
+                    //@ 	DEC EN.MX(X)
+                    game_state.entity_playfield_position[entity][0] -= 1;
+
+                    //@ 	JSR EN.MUP		;  new square
+                    move_entity_to_new_square(
+                        entity,
+                        game_state,
+                        result.in_tunnel,
+                        square_height_index,
+                        out_square_height_index,
+                        out_square_flags_index,
+                    );
+
+                    //@ 	TRAI 2 EN.AND(X)	;  animation direction
+                    game_state.entity_animation[entity] = 2;
+
+                    //@ 40$:
+                    //@ 	RTS
+                }
+            }
+        }
+    }
+    if (game_state.entity_movement_delta[1] >= 0) {
+        if (game_state.entity_fine_position[entity][1] >= 0x14) {
+            const square_height_index = out_square_height_index.* + 1;
+            const result = check_wall_collision(
+                square_height_index,
+                entity,
+                game_state,
+            );
+            if (result.did_collide) {
+                game_state.entity_fine_position[entity][1] = 0x13;
+                game_state.entity_wall_collision[entity] = true;
+            } else {
+                unreachable;
+                //TODO:
+                // increment_y_direction(entity, game_state);
+            }
+        }
+    } else {
+        if (game_state.entity_fine_position[entity][1] < 0xC) {
+            const square_height_index = out_square_height_index.* - 1;
+            const result = check_wall_collision(
+                square_height_index,
+                entity,
+                game_state,
+            );
+            if (result.did_collide) {
+                game_state.entity_fine_position[entity][1] = 0xC;
+                game_state.entity_wall_collision[entity] = true;
+            } else {
+                //@ ;------------------------------
+                //@ ;  decrement in Y direction   -
+                //@ ;------------------------------
+                //@ EN.YDE:
+                //@ 	LDA EN.IY(X)
+                //@ 	BPL 40$
+                if (game_state.entity_fine_position[entity][1] < 0) {
+                    //@ 	ADD #20
+                    //@ 	STA EN.IY(X
+                    game_state.entity_fine_position[entity][1] += 0x20;
+
+                    //@ 	LDA EN.HP(X
+                    //@ 	SUB #08
+                    //@ 	STA EN.HP(X)
+
+                    //@ 	INC EN.VP(X)
+                    //@ 	INC EN.VP(X)
+                    game_state.entity_picture_position[entity] += .{ -8, 2 };
+
+                    //@ 	DEC EN.MY(X)
+                    game_state.entity_playfield_position[entity][1] -= 1;
+
+                    //@ 	JSR EN.MUP	;  new sqare update
+                    move_entity_to_new_square(
+                        entity,
+                        game_state,
+                        result.in_tunnel,
+                        square_height_index,
+                        out_square_height_index,
+                        out_square_flags_index,
+                    );
+                    //@ 	TRAI 1 EN.AND(X)	;  animation direction
+                    game_state.entity_animation[entity] = 1;
+                    //@ 40$:
+                    //@ 	RTS
+                }
+            }
+        }
+    }
+
+    //@ 60$:
+    //@ 	RTS
+}
+const CollisionResult = struct {
+    did_collide: bool = false,
+    in_tunnel: bool = false, //for use in EN.MUP
+};
+fn check_wall_collision(
+    square_height_index: usize,
+    entity: usize,
+    game_state: *GameState,
+) CollisionResult {
+    const square_height = game_state.current_wave_data[square_height_index];
+    //TODO: figure out what these flags are
+    const flags = game_state.current_wave_data[
+        square_height_index +
+            PLAYFIELD_HEIGHT * PLAYFIELD_HEIGHT
+    ];
+    const vertical_distance = game_state.entity_height[entity] - square_height;
+    var did_collide = flags & 0x8 != 0;
+    var in_tunnel = flags & 0x20 != 0;
+    if (@abs(vertical_distance) <= 2) {
+        in_tunnel = false;
+    } else if (!in_tunnel) {
+        did_collide = true;
+    }
+    return .{ .in_tunnel = in_tunnel, .did_collide = did_collide };
+}
+//@ ;--------------------------------------------------
+//@ ;  routine to update for new square
+//@ EN.MUP:
+fn move_entity_to_new_square(
+    entity: usize,
+    game_state: *GameState,
+    in_tunnel: bool,
+    new_square_height_index: usize,
+    out_square_height_index: *usize,
+    out_square_flags_index: *usize,
+) void {
+    //@ 	LDY #0
+    //@ 	TXA
+    //@ 	IFNE
+    if (entity != PLAYER_ENTITY) {
+        //@ 		; clear collision bit
+        //@ 	LDA @EZ.MA2(Y)
+        //@ 	AND #^B11110111
+        //@ 	STA @EZ.MA2(Y)
+        const old_flags = &game_state.current_wave_data[out_square_flags_index.*];
+        old_flags.* &= 0b11110111;
+        //@ 	ENDIF
+    }
+
+    //@ 	TR16AM EZ.BOR,EZ.MAT
+    out_square_height_index.* = new_square_height_index;
+    //@ 	TR16AM EZ.BO2,EZ.MA2
+    out_square_flags_index.* = new_square_height_index + PLAYFIELD_HEIGHT * PLAYFIELD_WIDTH;
+
+    const new_flags = &game_state.current_wave_data[out_square_flags_index.*];
+    //@ 	TXA
+    //@ 	IFNE
+    if (entity != PLAYER_ENTITY) {
+        //@ 	LDA @EZ.MA2(Y)	;  set collision bit, except player
+        //@ 	ORA #^B00001000
+        //@ 	STA @EZ.MA2(Y)
+        new_flags.* |= 0b00001000;
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA @EZ.MA2(Y)
+    //@ 	AND #20
+    //@ 	IFEQ
+    if (new_flags.* & 0x20 == 0) {
+        //@ 	 STA EN.TFL(X)
+        game_state.entity_in_tunnel[entity] = false;
+    }
+    //@ 	ELSE		; if tunnel
+    else {
+        //@ 	 LDA EN.TFP(X)	  ; update tunnel flag
+        //@ 	 IFNE
+        if (in_tunnel) {
+            //@ 	  TRAI 1 EN.TFL(X)
+            game_state.entity_in_tunnel[entity] = true;
+            //@ 	 ENDIF
+        }
+        //@ 	 LDA EN.TFL(X)	  ; and mt priority
+        //@ 	 IFNE
+        if (game_state.entity_in_tunnel[entity]) {
+            //@ 	  TRAI 0FF EN.PR1(X)
+            game_state.entity_priority[entity][0] = -1;
+            //@ 	  BNE 50$		;  BRA
+            //@ 50$:
+            //@ 	TRAI 1 EN.NSF(X)	;  new square flag
+            game_state.entity_new_square_flag[entity] = true;
+            //@ 	RTS
+            return;
+
+            //@ 	 ENDIF
+        }
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA  @EZ.MA2(Y)
+    //@ 	AND #40
+    //@ 	IFNE
+    if (new_flags.* & 0x40 == 0) {
+        //@ 	 TRAI 0 EN.PR1(X)
+        game_state.entity_priority[entity][0] = 0;
+    }
+    //@ 	ELSE
+    else {
+        //@ 	 TRAI 0FF EN.PR1(X)
+        game_state.entity_priority[entity][0] = -1;
+        //@ 	ENDIF
+    }
+
+    //@ 50$:
+    //@ 	TRAI 1 EN.NSF(X)	;  new square flag
+    game_state.entity_new_square_flag[entity] = true;
+
+    //@ 	RTS
+}
+
+//@     EN.PUP:
+fn animate_player(game_state: *GameState) void {
+    const entity = PLAYER_ENTITY;
+    //@     .RADIX 10
+    //@ EN.TBL:	.BYTE 1,5,25,29,17,21,9,13
+    const PLAYER_PICTURE_NUMBERS = [_]isize{ 1, 5, 25, 29, 17, 21, 9, 13 };
+
+    //@ 	LDA EN.LMD
+    //@ 	CMP #1
+    //@ 	IFEQ
+    if (game_state.entity_life_mode[entity] == .Dying) {
+        //TODO:
+        unreachable;
+        //@ EN.DTL:
+        //@ 	.BYTE 105.,105.,85.,81.
+        //@ 	.BYTE 101.,101.,85.,81.
+        //@ 	.BYTE 97.,93.,93.,81.
+        //@ 	.BYTE 89.,89.,85.,81.
+        //@ 	 LDA EN.DEL
+        //@ 	 IFNE
+        //@ 	  LSRS 5	;  input 0-7F, output 0-3
+        //@ 	  AND #03	;  just in case
+        //@ 	  STA TEMP1
+        //@ 	  LDA WV.LIV
+        //@ 	  CMP #4
+        //@ 	  IFCS
+        //@ 	   LDA #4
+        //@ 	  ENDIF
+        //@ 	  SUB #1
+        //@ 	  ASLS 2
+        //@ 	  ADD TEMP1
+        //@ 	  TAY
+        //@ 	  LDA EN.DTL(Y)
+        //@ 	 JSR EN.PCF
+        //@ 	 ENDIF
+        //@ 	 RTS
+        //@ 	ENDIF
+    }
+
+    //@ ;  get one of four directions
+    //@ 	LDA EN.AND(X)
+    //@ 	ASL
+    //@ 	STA TEMP5
+
+    //@ ;  get step,  left-right
+    //@ 	LDA #0
+    //@ 	LDY EN.JFL
+    //@ 	IFEQ		;  only if not jumping
+    //@ 	LDA EN.IX
+    //@ 	ADD EN.IY
+    //@ 	AND #10
+    //@ 	LSRS 4
+    //@ 	ENDIF
+    //@ 	ADD TEMP5
+    var picture_number_index =
+        game_state.entity_animation_direction[entity] << 1;
+    if (!game_state.entity_jump_flag) {
+        picture_number_index += ((game_state.entity_fine_position[entity][0] +
+            game_state.entity_fine_position[entity][1]) & 0x10) >> 4;
+    }
+
+    //@ ;  picture
+    //@ 	TAY
+    //@ 	LDA EN.TBL(Y)
+    var picture_number = PLAYER_PICTURE_NUMBERS[@intCast(picture_number_index)];
+
+    //@ 	ADD #2
+    //@ 	STA EN.PC3(X)
+    game_state.entity_picture[entity][2] = picture_number + 2;
+    //@ 	ADC #1
+    //@ 	STA EN.PC4(X)
+    game_state.entity_picture[entity][3] = picture_number + 3;
+
+    //@ 	LDY EN.CDL
+    //@ 	IFEQ
+    //@ 	 SUB #3
+    //@ 	ELSE
+    //@ 	 LDA #109.
+    //@ 	ENDIF
+    if (game_state.entity_collision_delay > 0) {
+        picture_number = 0x109;
+    }
+
+    //@ 	STA EN.PC1(X)
+    game_state.entity_picture[entity][0] = picture_number;
+    //@ 	ADD #1
+    //@ 	STA EN.PC2(X)
+    game_state.entity_picture[entity][1] = picture_number + 1;
+    //@ 	RTS
+}
+//EN.COL
+fn detect_collision(entity: usize, game_state: *GameState) void {
+    //@ ;-----------------------
+    //@ ;  collision EN vs EN(0)
+
+    //@ EN.COL:
+    //@ 	COLSIZ=080
+    //@ 	LDA EN.LMD(X)	;  if not on maze, no collision
+    //@ 	IFNE
+    if (game_state.entity_life_mode[entity] != .Alive) {
+        //@ 	 RTS
+        return;
+        //@ 	ENDIF
+    }
+
+    //@ ;  compare EN CE X
+    //@ 	LDA EN.IX(X)
+    //@ 	ASLS 3
+    //@ 	STA EN.T1
+    const entity_fine_x = game_state.entity_fine_position[entity][0] * 8;
+
+    //@ 	LDA EN.IX
+    //@ 	ASLS 3
+    //@ 	SUB EN.T1
+    //@ 	STA EN.T2
+    const player_entity_delta_x = (game_state.entity_fine_position[PLAYER_ENTITY][0] * 8) - entity_fine_x + 0x80;
+    //@ 	LDA EN.MX
+    //@ 	SBC EN.MX(X)
+    //@ 	STA EN.T3
+    const playfield_delta_x =
+        game_state.entity_playfield_position[PLAYER_ENTITY][0] -
+        game_state.entity_playfield_position[entity][0] - @as(isize, if (player_entity_delta_x < 0) 1 else 0);
+
+    //@ 	AD16AI EN.T2 COLSIZ
+    //NOTE handled above
+
+    //@ 	LDA EN.T3	; high byte of difference must =0,1
+    //@ 	CMP #1
+    //@ 	IFCS
+    if (u8gte(playfield_delta_x, 1)) {
+        //@ 	 RTS
+        return;
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA EN.IY(X)
+    //@ 	ASLS 3
+    //@ 	STA EN.T4
+    const entity_fine_y = game_state.entity_fine_position[entity][1] * 8;
+
+    //@ 	LDA EN.IY
+    //@ 	ASLS 3
+    //@ 	SUB EN.T4
+    //@ 	STA EN.T5
+    const player_entity_delta_y = (game_state.entity_fine_position[PLAYER_ENTITY][1] * 8) - entity_fine_y + 0x80;
+
+    //@ 	LDA EN.MY
+    //@ 	SBC EN.MY(X)
+    //@ 	STA EN.T6
+    const playfield_delta_y =
+        game_state.entity_playfield_position[PLAYER_ENTITY][1] -
+        game_state.entity_playfield_position[entity][1] -
+        @as(isize, if (player_entity_delta_y < 0) 1 else 0);
+    //@ 	AD16AI EN.T5 COLSIZ
+    //NOTE handled above
+
+    //@ 	LDA EN.T6	;  high byte of difference must =0
+    //@ 	CMP #1
+    //@ 	IFCS
+    if (u8gte(playfield_delta_y, 1)) {
+        //@ 	 RTS
+        return;
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA EN.JFL	;  if not jumping
+    //@ 	IFEQ
+    if (!game_state.entity_jump_flag) {
+        //@ 	 LDA EN.HEI(X)	;  height difference <=2
+        //@ 	 SUB EN.HEI
+        const height_delta = game_state.entity_height[entity] - game_state.entity_height[PLAYER_ENTITY];
+        //@ 	 BINT 2,40$
+        // 40$_B19B:
+        //@ 	 RTS
+        if (height_delta >= 3 or height_delta < -4) {
+            return;
+        }
+        //@ 	ENDIF
+    }
+    //@ 40$:
+    //@ 	LDA EN.STA(X)
+    //@ 	CMP #7		;  honey
+    //@ 	IFEQ
+    if (game_state.entity_state[entity] == .Honey) {
+        //@ 	 LDA #14
+        //@ 	 JSR MN.SN1
+        //TODO: game sound
+
+        //@ 	 TRAI 01 EN.ANV(X)
+        game_state.entity_animation[entity] = 1;
+        //*******TODO********
+        unreachable;
+        //@ 	 LDA #10	;  1000 points
+        //@ 41$:
+        //@ 	 STA 1+SC.INC
+        //@ 	 LDA #0
+        //@ 	 STA SC.INC
+        //@ 	 STA 2+SC.INC
+
+        //@ 	 JSR SC.UPD
+        //@ 	 TRAI 0D EN.STA(X)
+        //@ 	 TRAI 080 EN.DEL(X)
+        //@ 	 RTS
+        //@ 	ENDIF
+    }
+
+    //@ 	CMP #6		;  witch
+    //@ 	IFEQ
+    if (game_state.entity_state[entity] == .Witch) {
+        //*******TODO********
+        unreachable;
+        //@ 	 LDA EN.CDL
+        //@ 	 IFNE
+        //@ 	  TRAI 02 EN.ANV(X)
+        //@ 	  LDA #30	;  3000 points
+        //@ 	  BNE 41$	;  BRA
+        //@ 	 ENDIF
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA EN.CDL
+    //@ 	IFNE
+    if (game_state.entity_collision_delay != 0) {
+        //@ 	 RTS
+        return;
+        //@ 	ENDIF
+    }
+
+    //*******TODO********
+    unreachable;
+    //@ 	LDA EN.STA(X)
+    //@ 	CMP #0D		;  score display
+    //@ 	IFEQ
+    //@ 	 RTS
+    //@ 	ENDIF
+
+    //@ 	CMP #0A		;  hat
+    //@ 	IFEQ
+    //@ 	 TRAI 0FF EN.CDL	;  collision delay
+
+    //@ 	 LDA #8
+    //@ 	 JSR MN.SN1
+    //@ 42$:	 TRAI 0 EN.ANV(X)
+    //@ 	 LDA #05
+    //@ 	 BNE 41$	;   BRA
+    //@ 	ENDIF
+
+    //@ ;	LDA EN.STA(X)	;  if creature eating
+    //@ 	CMP #3
+    //@ 	IFEQ
+    //@ 	 LDA EN.JFL
+    //@ 	 IFEQ		;  and no jumping
+    //@ 	  LDA #2
+    //@ 	  JSR MN.SN1
+    //@ 	  JMP 42$
+    //@ 	 ENDIF
+    //@ 	ELSE
+    //@ 	 LDA EN.JFL	; if jumping
+    //@ 	 IFNE
+    //@ 	  LDA EN.STA(X)
+    //@ 	  IFEQ		; if  a tree
+    //@ 	   TRAI 0 EN.ANV(X)	;  youth regained
+    //@ 	   LDY WV.DF2
+    //@ 	   TRAM DF.TRG(Y) EN.DEL(X)	; tree growing time
+    //@ 	   TRAI 0 1+EN.DEL(X)
+    //@ 	  ELSE		; if not
+    //@ 	   CMP #1
+    //@ 	   IFPL
+    //@ 	   CMP #3
+    //@ 	   IFMI
+    //@ 	    TRAI 5 EN.STA(X)	;  stun it
+    //@ 	    TR16AI 60 EN.DEL(X)
+    //@ 	   ENDIF
+    //@ 	   ENDIF
+    //@ 	  ENDIF
+    //@ 	 ELSE
+    //@ 	  TRAI 1 EN.LMD	;  else player death
+    //@ 	  TRAI 07F EN.DEL
+    //@ 	  LDA #3
+    //@ 	  JSR MN.SN1	;  pl death sound
+    //@ 	 ENDIF
+    //@ 	ENDIF
+
+    //@ 	RTS
+}
+
+//SC.UPD
+fn update_score(delta: isize, game_state: *GameState) void {
+    //@ ;----------------------
+    //@ ;  update score
+    //@ SC.UPD:
+
+    //@     SED
+    //@ 	LDA SC.SCO
+    //@ 	ADD SC.INC
+    //@ 	STA SC.SCO
+    //@ 	LDA SC.SCO+1
+    //@ 	ADC SC.INC+1
+    //@ 	STA SC.SCO+1
+    //@ 	LDA SC.SCO+2
+    //@ 	ADC SC.INC+2
+    //@ 	STA SC.SCO+2
+    //@ 	CLD
+    //NOTE: this is decimal adjustment code which we don't need
+    game_state.score += delta;
+
+    //@ 	PHXYA			;  don't zap (X)
+    //@ 	JSR SC.OT2
+    draw_score(game_state);
+    //@ 	PLXYA
+
+    //@ 	LDA SC.NEL
+    //@ 	IFNE
+    //@ 	LDA SC.SCO+2
+    //@ 	CMP SC.NEL
+    //@ 	IFCS
+    if (game_state.next_extra_life != 0 and
+        game_state.score >= (game_state.next_extra_life << 16))
+    {
+        //****TODO*****
+        unreachable;
+
+        //@ 	 SED
+        //@ 10$:	 LDA SC.NEL
+        //@ 	 ADD #7		;  extra life every 70000
+        //@ 	 IFCS
+        //@ 	  LDA #0
+        //@ 	 ENDIF		;  no bugs at 1 million please
+        //@ 	 STA SC.NEL
+
+        //@ 	 LDA SC.SCO+2
+        //@ 	 CMP SC.NEL
+        //@ 	 BCS 10$	;  max of 1 extra life per inc
+
+        //@ 	 CLD
+        //@ 	 LDA WV.LIV
+        //@ 	 CMP #6		;  max of six lives
+        //@ 	 IFCC
+
+        //@ 	 LDA #1
+        //@ 	 JSR MN.SN1	; extra life sound
+
+        //@ 	 LDA SC.INC+2
+        //@ 	 CMP #2		;  don't give extra lives for warp
+        //@ 	 IFCC
+        //@ 	  INC WV.LIV
+        //@ 	 ENDIF
+
+        //@ 	 TRAM WV.LIV TEMP5
+        //@ 	 PHXYA			;  don't zap (X)
+        //@ 	 JSR SC.LD2
+        //@ 	 PLXYA
+
+        //@ 	 ENDIF
+        //@ 	ENDIF
+        //@ 	ENDIF
+    }
+
+    //@ 	RTS
+}
+
+//EN.CDT
+fn detect_gem(entity: usize, game_state: *GameState) void {
+    //@ ;------------
+    //@ ;  detect gem
+    //@ EN.CDT:
+    //@ 	LDA EN.LMD(X)
+    //@ 	IFNE
+    if (game_state.entity_life_mode[entity] != .Alive) {
+        //@ 	RTS		; must be alive to see gems
+        return;
+        //@ 	ENDIF
+    }
+    const entity_state = &game_state.entity_state[entity];
+
+    //@ 	LDA EN.STA(X)
+    //@ 	CMP #06		; only gem-eaters and trees see gems
+    //@ 	IFPL
+    //@ 	CMP #9
+    //@ 	IFNE
+    //@ 	 RTS
+    //@ 	ENDIF
+    //@ 	ENDIF
+    if (@intFromEnum(entity_state.*) >= 6 and entity_state.* != .CrystalBall) {
+        return;
+    }
+
+    //@ 	LDA EN.TFL(X)
+    //@ 	IFEQ		; if not in tunnel
+    //NOTE: doing a return early instead of a giant if statement
+    if (game_state.entity_in_tunnel[entity]) {
+        return;
+    }
+    const entity_flags = &game_state.current_wave_data[
+        game_state.entity_playfield_square_flags_index[PLAYER_ENTITY]
+    ];
+    //@ 	LDA @EZ.MA2(Y)
+    //@ 	AND #10
+    //@ 	IFNE		; first time there
+    if (entity_flags.* & 0b00010000 != 0) {
+        //@ 	LDA @EZ.MA2(Y)
+        //@ 	AND #^B11101111
+        //@ 	STA @EZ.MA2(Y)
+        entity_flags.* &= 0b11101111;
+
+        //@ 	TXA
+        //@ 	IFEQ		;  bear
+        if (entity == PLAYER_ENTITY) {
+
+            //@ 	 LDA SC.GEM
+            //@ 	 CMP #99
+            //@ 	 IFCC
+            if (u8lt(game_state.gems_collected, 99)) {
+                //@ 	  SED
+                //@ 	  ADC #1
+                //@ 	  CLD
+                //@ 	  STA SC.GEM
+                game_state.gems_collected += 1;
+                //@ 	 ENDIF
+            }
+            //@ 	 LDA #0
+            //@ 	 STA 1+SC.INC
+            //@ 	 STA 2+SC.INC
+            //@ 	 TRAM SC.GEM SC.INC
+            //@ 	 JSR SC.UPD
+            update_score(game_state.gems_collected, game_state);
+
+            //TODO: sound
+            //@ 	 JSR MN.SN2	;  sound for gem
+        }
+        //@ 	ELSE		;  others
+        else {
+            //TODO: sound
+            //@ 	 JSR MN.SN3
+
+            //@ 	 LDA EN.STA(X)
+            //@ 	 CMP #1
+            //@ 	 IFNE
+            //@ 	 CMP #2
+            //@ 	 BNE 10$
+            //@ 	 ENDIF
+
+            switch (entity_state.*) {
+                .PlungerMovingTowardsWall, .PlungerFollowsWall => {
+                    //@ 	  LDY WV.DF2
+                    //@ 	  TRAM DF.ETD(Y) EN.DEL(X)
+                    //@ 	  TRAI 0 1+EN.DEL(X)
+                    game_state.entity_delay[entity] =
+                        EATING_TIMES[@intCast(game_state.wave_long_term_difficulty)];
+                    //@ 	  TRAI 3 EN.STA(X)
+                    entity_state.* = .PlungerEating;
+                },
+                else => {},
+            }
+            //@  10$:
+            //@ 	ENDIF
+        }
+
+        //@ 	JSR EN.COE		;  erase gem
+        erase_gem(entity, game_state);
+        //@ 	INC SN.GFL
+        //TODO: sound
+
+        //@ 	DEC16A CE.COC		;  dec gem count
+        game_state.wave_gems_left -= 1;
+
+        //@ 	LDA CE.COC
+        //@ 	ORA 1+CE.COC
+        //@ 	IFEQ
+        if (game_state.wave_gems_left == 0) {
+            //@ 	 STX EN.LDF
+            game_state.entity_that_took_last_gem = entity;
+            //@ 	ENDIF
+        }
+        //@ 	ENDIF
+    }
+    //@ 	ENDIF
+    //@ 	RTS
+}
+//EN.OUT
+fn output_entity(entity: usize, game_state: *GameState) void {
+    //@ ;----------------------------------------
+    //@ ;  output EN
+    //@ ;  convert to screen coordinates
+    //@ ;  INPUT  EN.HP VP HEI HOF IX IY
+    //@ ;  OUTPUT EN.X EN.Y
+    //@ EN.OUT:
+    //@ 	LDA EN.BLK(X)
+    //@ 	BNE 10$		;  blanking
+
+    //@ 	LDA EN.LMD(X)
+    //@ 	CMP #3		;  if dead, no picture
+    //@ 	IFEQ
+    //@ 10$:	  LDA #0
+    //@ 	  JSR EN.PCF
+    //@ 	ENDIF
+    if (game_state.entity_blanking_flag[entity] or game_state.entity_life_mode[entity] == .Dead) {
+        fill_entity_pictures(0, entity, game_state);
+    }
+
+    //@ 	LDA EN.LMD(X)
+    //@ 			;  if unalive, skip this
+    //@ 	IFNE
+    //@ 	 RTS
+    //@ 	ENDIF
+    if (game_state.entity_life_mode[entity] != .Alive) {
+        return;
+    }
+
+    //@ 	LDA EN.HEI(X)
+    //@ 	ADD EN.HOF(X)
+    //@ 	STA EN.HTO(X)
+
+    //@ 	LDA EN.IY(X)	; EN.IY/4
+    //@ 	LSRS 2
+    //@ 	STA EN.TMP
+
+    //@ 	LDA EN.HP(X)
+    //@ 	ADD EN.TMP
+    //@ 	TAY		; + EN.HP
+
+    //@ 	LDA EN.IX(X)
+    //@ 	LSRS 3
+    //@ 	STA EN.TMP	; EN.IX/8
+
+    //@ 	TYA
+    //@ 	SUB EN.TMP
+    //@ 	STA EN.X(X)	; EN.HP+EN.IY/4-EN.IX/8
+
+    //@ 	LDA EN.VP(X)
+    //@ 	SUB EN.TMP
+    //@ 	TAY		; EN.VP-EN.IX/8
+
+    //@ 	LDA EN.IY(X)
+    //@ 	ADD #08
+    //@ 	LSRS 4
+    //@ 	STA EN.TMP
+    //@ 	TYA
+    //@ 	SUB EN.TMP
+    //@ 	ADD EN.HTO(X)
+    //@ 	STA EN.Y(X)	; -(EN.IY+8)/16+HEIGHT
+    const fine_position = game_state.entity_fine_position[entity];
+    const picture_position = game_state.entity_picture_position[entity];
+
+    //TODO: I think this is right??
+    game_state.entity_position[entity] = .{
+        //X: EN.HP+EN.IY/4-EN.IX/8
+        picture_position[0] + @divTrunc(fine_position[1], 4) - @divTrunc(fine_position[0], 8),
+
+        //Y:  EN.VP-EN.IX/8-(EN.IY+8)/16+HEIGHT
+        picture_position[1] - @divTrunc(fine_position[0], 8) -
+            @divTrunc((fine_position[1] + 8), 16) +
+            (game_state.entity_height[entity] + game_state.entity_hof[entity]),
+    };
+
+    //@ 	RTS
+
+}
+//EN.STC
+fn entity_state_calculation(entity: usize, game_state: *GameState) void {
+    //TODO
+    //@ ;-------------------------------------------
+    //@ ;  calculate EN movement,  state calculation
+    //@ EN.STC:
+    //@ 	TXA	;  do nothing for player
+    //@ 	IFEQ
+    //@ 	 RTS
+    //@ 	ENDIF
+    if (entity == PLAYER_ENTITY) {
+        return;
+    }
+
+    //@ 	TRAI 0 EN.XD
+    //@ 	STA EN.YD
+    //TODO: player movement deltas.  do we need to make these global?
+    //      Thinking we don't need to because the only caller has these zeroed out anyway
+
+    //@ 	LDA EN.STA(X)
+    //@ 	CMP #10
+    //@ 	IFCS
+    //@ 	 LDA #10
+    //@ 	ENDIF
+    const entity_state = game_state.entity_state[entity];
+    //@ 	ASL
+    //@ 	TAY
+    //@ 	JMPIN 1$
+
+    switch (entity_state) {
+        .PlungerMovingTowardsWall => {
+            //@  DEC16A EN.DEL(X)
+            game_state.entity_delay[entity] -= 1;
+            //@  LDA EN.DEL(X)
+            //@  IFEQ
+            //@  LDA 1+EN.DEL(X)
+            //@  IFEQ
+            if (game_state.entity_delay[entity] == 0) {
+                //@   LDA EN.SP1(X)
+                //@   CMP EN.MSG
+                //@   IFMI
+                if (game_state.entity_slow_speed[entity] < game_state.gem_eater_max_speed) {
+                    //@   INC EN.SP1(X)
+                    game_state.entity_slow_speed[entity] += 1;
+                    //@   ENDIF
+                }
+
+                //@   TR16AI 100 EN.DEL(X)
+                game_state.entity_delay[entity] = 0x100;
+                //@  ENDIF
+                //@  ENDIF
+            }
+
+            //@  LDA EN.WCF(X)
+            //@  IFNE		;  if wall was hit
+            if (game_state.entity_wall_collision[entity]) {
+                //@   TRAI 0FF TEMP1 ;  turn right
+                //@   LDA EN.DR(X)
+                //@   ADD TEMP1
+                //@   AND #03
+                //@   STA EN.DR(X)
+                game_state.entity_direction[entity] += 0xFF;
+                game_state.entity_direction[entity] &= 3;
+                //@   TRAI 2 EN.STA(X)	; and follow wall
+                game_state.entity_state[entity] = .PlungerFollowsWall;
+                //@   TRAI 3 EN.ANV(X)	; reset turn-counter
+                game_state.entity_animation[entity] = 3;
+                //@  ENDIF
+            }
+            //@  JSR EN.DRC	;  direction calc
+            calculate_entity_deltas(entity, game_state);
+            //@  JSR EN.PLP
+            fill_plunger_pictures(entity, game_state);
+
+            //@  JMP 50$
+            clamp_delta_entity_movement_delta(game_state);
+        },
+        .CrystalBall => {
+            //@ 37$:	.BYTE 228.,230.,232.,234.,234.,234.,236.,238.
+            const CRYSTAL_BALL_PICURES = [_]isize{
+                228, 230, 232, 234, 234, 234, 236, 238,
+            };
+            //@ ;  crystal ball, state 9
+
+            //@ 19$:
+            //@ 	LDA #0
+            //@ 	JSR EN.PCF
+            fill_entity_pictures(0, entity, game_state);
+            //@ 	LDA FRAME
+            //@ 	AND #70
+            //@ 	LSRS 4
+            //@ 	TAY
+            //@ 	LDA 37$(Y)
+            const picture = CRYSTAL_BALL_PICURES[@intCast((game_state.frame & 0x70) >> 4)];
+            //@ 	STA EN.PC3(X)
+            game_state.entity_picture[entity][2] = picture;
+            //@ 	ADD #1
+            //@ 	STA EN.PC4(X)
+            game_state.entity_picture[entity][3] = picture + 1;
+
+            //@ 	LDA FRAME
+            //@ 	AND #03
+            //@ 	IFEQ
+            if (game_state.frame & 3 == 0) {
+                //@ 	 TRAM EN.CMS TEMP1
+
+                //@ 	 LDA EN.MX
+                //@ 	 SUB EN.MX(X)
+                const delta_x =
+                    game_state.entity_playfield_position[PLAYER_ENTITY][0] -
+                    game_state.entity_playfield_position[0][0];
+                //@ 	 IFMI
+                //@ 	  LDA EN.GP1(X)
+                //@ 	  SUB #1
+                //@ 	 ELSE
+                //@ 	  CMP #1
+                //@ 	  IFPL
+                //@ 	   LDA EN.GP1(X)
+                //@ 	   ADD #1
+                //@ 	  ELSE
+                //@ 	   LDA EN.GP1(X)
+                //@ 	  ENDIF
+                //@ 	 ENDIF
+                game_state.general_purpose_1 += if (delta_x < 0)
+                    -1
+                else if (delta_x >= 1)
+                    1
+                else
+                    0;
+
+                //@ 	 JSR GP.TRC
+                //@ 	 STA EN.GP1(X)
+                game_state.general_purpose_1 = clamp_delta(delta_x);
+
+                //@ ;  y coordinate
+
+                //@ 	 LDA EN.MY
+                //@ 	 SUB EN.MY(X)
+                const delta_y =
+                    game_state.entity_playfield_position[PLAYER_ENTITY][1] -
+                    game_state.entity_playfield_position[0][1];
+                //@ 	 IFMI
+                //@ 	  LDA EN.GP2(X)
+                //@ 	  SUB #1
+                //@ 	 ELSE
+                //@ 	  CMP #1
+                //@ 	  IFPL
+                //@ 	   LDA EN.GP2(X)
+                //@ 	   ADD #1
+                //@ 	  ELSE
+                //@ 	   LDA EN.GP2(X)
+                //@ 	  ENDIF
+                //@ 	 ENDIF
+                game_state.general_purpose_2 += if (delta_y < 0)
+                    -1
+                else if (delta_y >= 1)
+                    1
+                else
+                    0;
+                //@ 	 JSR GP.TRC
+                //@ 	 STA EN.GP2(X)
+                game_state.general_purpose_2 = clamp_delta(delta_y);
+            }
+            //@ 	ENDIF
+
+            //@ 	TRAM EN.GP1(X) EN.XD
+            //@ 	TRAM EN.GP2(X) EN.YD
+            game_state.entity_movement_delta =
+                .{ game_state.general_purpose_1, game_state.general_purpose_2 };
+            //@ 	RTS
+        },
+        .Swarm => {
+            //@     DEC16A EN.DEL(X)
+            //@ 	LDA EN.DEL(X)
+            game_state.entity_delay[entity] -= 1;
+            //@ 	IFEQ
+            //@ 	LDA 1+EN.DEL(X)
+            //@ 	IFEQ
+            if (game_state.entity_delay[entity] == 0) {
+                //@ 	 TRAI 1 EN.LMD(X)
+                game_state.entity_life_mode[entity] = .Dying;
+                //@ 	 JSR EN.CCB
+                //clear collision bit
+                game_state.current_wave_data[game_state.entity_playfield_square_flags_index[entity]] &= 0b11110111;
+            }
+            //@ 	ENDIF
+            //@ 	ENDIF
+
+            //@ 	LDA FRAME
+            //@ 	AND #0C
+            //@ ;	LSR		; 0,4,8 OR C
+
+            //@ 	ADD #128.+68.
+            //@ 	JSR EN.PCF
+            fill_entity_pictures(
+                (game_state.frame & 0xC) + 128 + 68,
+                entity,
+                game_state,
+            );
+
+            //@ 	LDY WV.DF2
+            //@ 	LDA 1+WV.TIM
+            //@ 	LSR
+            //@ 	ADD DF.SWS(Y)
+            //@ 	CMP #10
+            //@ 	IFCS
+            //@ 	LDA #10
+            //@ 	ENDIF
+            const entity_slow_speed = @min((game_state.wave_time >> 9) +
+                SWARM_SPEEDS[@intCast(game_state.wave_long_term_difficulty)], 0x10);
+            //@ 	STA EN.SP1(X)
+            game_state.entity_slow_speed[entity] = entity_slow_speed;
+
+            //@ 	JMP 45$
+            killer_algorithm(entity, game_state);
+        },
+        //TODO
+        else => unreachable,
+    }
+}
+//45$
+fn killer_algorithm(entity: usize, game_state: *GameState) void {
+
+    //@ LDA EN.IX(X)
+    //@ LSRS 2
+    //@ STA TEMP1
+    //@ LDA EN.MX(X)
+    //@ ASLS 3
+    //@ ORA TEMP1
+    //@ STA TEMP2
+
+    //@ LDA EN.IX
+    //@ LSRS 2
+    //@ STA TEMP1
+    //@ LDA EN.MX
+    //@ ASLS 3
+    //@ ORA TEMP1
+    //@ SUB TEMP2
+
+    //@ IFCS
+    //@  CMP EN.SP1(X)
+    //@  IFCS
+    //@   LDA EN.SP1(X)
+    //@  ENDIF
+    //@ ELSE
+    //@  NEGA
+    //@  CMP EN.SP1(X)
+    //@  IFCS
+    //@   LDA EN.SP1(X)
+    //@  ENDIF
+    //@  NEGA
+    //@ ENDIF
+
+    //@ STA EN.XD
+
+    //@ LDA EN.IY(X)
+    //@ LSRS 2
+    //@ STA TEMP1
+    //@ LDA EN.MY(X)
+    //@ ASLS 3
+    //@ ORA TEMP1
+    //@ STA TEMP2
+
+    //@ LDA EN.IY
+    //@ LSRS 2
+    //@ STA TEMP1
+    //@ LDA EN.MY
+    //@ ASLS 3
+    //@ ORA TEMP1
+    //@ SUB TEMP2
+
+    //@ IFCS
+    //@  CMP EN.SP1(X)
+    //@  IFCS
+    //@   LDA EN.SP1(X)
+    //@  ENDIF
+    //@ ELSE
+    //@  NEGA
+    //@  CMP EN.SP1(X)
+    //@  IFCS
+    //@   LDA EN.SP1(X)
+    //@  ENDIF
+    //@  NEGA
+    //@ ENDIF
+
+    //@ STA EN.YD
+
+    const delta =
+        (@divTrunc(game_state.entity_fine_position[entity], V2{ 4, 4 }) |
+        @divTrunc(game_state.entity_playfield_position[entity], V2{ 8, 8 })) -
+        (@divTrunc(game_state.entity_fine_position[PLAYER_ENTITY], V2{ 4, 4 }) |
+        @divTrunc(game_state.entity_playfield_position[PLAYER_ENTITY], V2{ 8, 8 }));
+    const slow_speed: V2 = @splat(game_state.entity_slow_speed[entity]);
+    game_state.entity_movement_delta = @min(delta, slow_speed);
+
+    //@ JMP 50$
+    clamp_delta_entity_movement_delta(game_state);
+}
+fn clamp_delta(delta: isize) isize {
+    return toolbox.clamp(delta, -12, 12);
+}
+fn clamp_delta_entity_movement_delta(game_state: *GameState) void {
+    //@ 50$:
+    //@ TRAI 0C TEMP1	;  truncate difs
+    //@ LDA EN.XD
+    //@ JSR GP.TRC
+    //@ STA EN.XD
+
+    //@ LDA EN.YD
+    //@ JSR GP.TRC
+    //@ STA EN.YD
+
+    game_state.entity_movement_delta =
+        toolbox.clamp(game_state.entity_movement_delta, .{ -12, -12 }, .{ 12, 12 });
+}
+//@ ;-----------------------
+//@ ;  life mode calculation
+//@ EN.LMC:
+fn entity_life_mode_calculation(entity: usize, game_state: *GameState) void {
+    //@ 	LDA EN.LMD(X)
+    //@ 	IFEQ		;  if alive skip this
+    //@ 	 RTS
+    //@ 	ENDIF
+    //@ 	TRAI 0 EN.XD
+    //@ 	STA EN.YD
+    game_state.entity_movement_delta = ZV2;
+    switch (game_state.entity_life_mode[entity]) {
+        .Alive => return,
+        .Spawning => {
+            //@   40$:		;  if being born, then come in from top
+
+            //@ 	LDA EN.LMD(X)
+            //@ 	CMP #2
+            //@ 	IFEQ
+            //@ LDA EN.VP(X)
+            //@ ADD EN.HEI(X)
+            //@ STA TEMP1
+            const destination = game_state.entity_picture_position[entity][1] +
+                game_state.entity_height[entity];
+
+            //@ LDA EN.STA(X)
+            //@ CMP #8
+            //@ IFEQ
+            var dy: isize = 4;
+            if (game_state.entity_state[entity] == .Swarm) {
+                //@  LDA #8	 	;  delete this if really pressed
+                //@  LDY WV.DF2
+                //@  CPY #4
+                //@  IFCC
+                //@  LDA WV.TIM+1
+                //@  CMP #12
+                //@  IFCC
+                //@  LDA #2
+                dy = if (game_state.wave_long_term_difficulty < 4 and
+                    game_state.wave_time < 0x1200)
+                    2
+                else
+                    8;
+                //@  ENDIF
+                //@  ENDIF
+            }
+            //@ ELSE
+            //@  LDA #4
+            //@ ENDIF
+            //@ STA TEMP2
+
+            //@ LDA EN.Y(X)
+            //@ SUB TEMP2
+            //@ STA EN.Y(X)
+            game_state.entity_position[entity][1] -= dy;
+            const entity_y = game_state.entity_position[entity][1];
+            //@ CMP #-28
+            //@ IFPL
+            //@  CMP #-28+8	;  between -4 and -1
+            //@  IFMI
+            if (entity_y >= -0x28 and
+                entity_y < -0x28 + 8)
+            {
+                //@  TRAI 0 EN.BLK(X)	;  no more blanking
+                game_state.entity_blanking_flag[entity] = false;
+            }
+            //@  ENDIF
+            //@ ENDIF
+
+            //@ LDA EN.Y(X)
+            //@ SUB #1
+            //@ CMP TEMP1	;  if at destination
+            //@ IFCC
+            //@  LDA EN.BLK(X)	;  and visible
+            //@  IFEQ
+            if (u8lt(entity_y - 1, destination) and !game_state.entity_blanking_flag[entity]) {
+                //@   STA EN.LMD(X)
+                game_state.entity_life_mode[entity] = .Alive;
+            }
+            //@  ENDIF
+            //@ ENDIF
+
+        },
+        .Dead => {
+            //@ ;   swarm in limbo  start afresh, after timer
+
+            //@ 	LDA EN.STA(X)
+            //@ 	CMP #8
+            //@ 	IFEQ
+
+            //@ 	LDA 1+WV.TIM
+            //@ 	CMP #06
+            //@ 	IFCC
+            //@ 	 LDA WV.TIM	;   check only every 4 secs
+            //@ 	 IFEQ
+            //@ 	 LDA 4+EN.STA
+            //@ 	 CMP #7		;   if honey there
+            //@ 	 ENDIF
+            //@ 	ELSE
+            //@ 	 LDA #0		;   or too much time
+            //@ 	ENDIF
+            //@ 	IFEQ
+            //@ 	LDA WV.TIM+1
+            //@ 	CMP #1		;  after 4 secs, come out anyway
+            //@ 	IFCS
+            //@ 	LDA EN.EWM
+            //@ 	IFEQ		;  not while eow in progress
+            //@ 	 LDA EN.DEA(X)
+            //@ 	 IFEQ
+            if (game_state.entity_state[entity] == .Swarm and
+                (game_state.wave_time >= 0x600 or game_state.wave_time & 0xFF == 0 or game_state.entity_state[4] == .Honey) and
+                game_state.wave_time >= 0x100 and
+                !game_state.entity_end_of_wave_mode and
+                !game_state.entity_is_dead[entity])
+            {
+                //@ 	  TRAI 2 EN.LMD(X)	;  start to scroll down
+                game_state.entity_life_mode[entity] = .Spawning;
+                //@ 	  JSR EN.INR		;  re-init position
+                init_entity_position(entity, game_state);
+                //@ 	  LDA #4
+                //@ 	  JSR MN.SN1		;  start bee warning sound
+                //TODO: sound
+                //@ 	 ENDIF
+                //@ 	 ENDIF
+                //@ 	 ENDIF
+                //@ 	ENDIF
+                //@ 	ENDIF
+            }
+            //@ 	RTS
+
+        },
+        .Dying => {
+            //@ 	TXA
+            //@ 	IFEQ		;  player rises to top, then dies
+            if (entity == PLAYER_ENTITY) {
+                //@ 	  LDA EN.DEL
+                //@ 	  IFEQ
+                if (game_state.entity_delay[entity] == 0) {
+                    //@ 	   LDA EN.Y
+                    //@ 	   ADD #8
+                    //@ 	   STA EN.Y
+                    game_state.entity_position[entity][1] += 8;
+                    //@ 	   CMP #0FF-18
+                    //@ 	   IFCS
+                    if (game_state.entity_position[entity][1] >= 0xFF - Y_COORDINATE_OFFSET) {
+                        //@ 	    TXA			;  (X)=0
+                        //@ 	    JSR EN.PCF
+                        fill_entity_pictures(0, entity, game_state);
+                        //@ 	    TRAI 3 EN.LMD
+                        game_state.entity_life_mode[entity] = .Dead;
+                        //@ 	    JSR GM.DT0
+                        //TODO
+                        unreachable;
+                    }
+                    //@ 	   ENDIF
+                }
+                //@ 	  ELSE
+                else {
+                    //@ 	   DEC EN.DEL
+                    game_state.entity_delay[entity] -= 1;
+                    //@ 	  ENDIF
+
+                }
+
+                //@ 	;  creature dying
+            }
+            //@ 	ELSE
+            else {
+                //TODO
+                unreachable;
+
+                //@ 	 JSR EN.CCB
+                //@ 	 LDA EN.Y(X)
+                //@ 	 CMP #0FF-24
+                //@ 	 IFCS
+                //@ 	  TRAI 3 EN.LMD(X)
+                //@ 	 ELSE			;  rise to top
+                //@ 	  ADD #4
+                //@ 	  STA EN.Y(X)
+                //@ 	 ENDIF
+
+                //@ 	ENDIF
+            }
+            //@ 	RTS
+        },
+    }
+}
+//@ ;----------------------------------
+//@ ;  calculate difs given direction
+//@ ;  0 r 1 b 2 l 3 f
+//@ EN.DRC:
+fn calculate_entity_deltas(entity: usize, game_state: *GameState) void {
+    //@ 	LDA EN.DR(X)
+    //@ 	IFEQ
+    if (game_state.entity_direction[entity] == 0) {
+        //@ 	 STA EN.XD
+        //@ 	 TRAM EN.SP1(X) EN.YD
+        game_state.entity_movement_delta = .{
+            0,
+            game_state.entity_slow_speed[entity],
+        };
+        return;
+        //@ 	 RTS
+        //@ 	ENDIF
+    }
+    unreachable;
+    //TODO
+
+    //@ 	CMP #1
+    //@ 	IFEQ
+    //@ 	 LDA EN.SP1(X)
+    //@ 	 NEGA
+    //@ 	 STA EN.XD
+    //@ 	 TRAI  0 EN.YD
+    //@ 	 RTS
+    //@ 	ENDIF
+
+    //@ 	CMP #2
+    //@ 	IFEQ
+    //@ 	 TRAI 0 EN.XD
+    //@ 	 LDA EN.SP1(X)
+    //@ 	 NEGA
+    //@ 	 STA EN.YD
+    //@ 	 RTS
+    //@ 	ENDIF
+
+    //@ 	CMP #3
+    //@ 	IFEQ
+    //@ 	 TRAM EN.SP1(X) EN.XD
+    //@ 	 TRAI 0 EN.YD
+    //@ 	 RTS
+    //@ 	ENDIF
+
+    //@ 	RTS
+}
+//@     ;-----------
+//@ ;  erase gem
+//@ EN.COE:
+fn erase_gem(entity: usize, game_state: *GameState) void {
+    //TODO
+    //@ 	LDY #0
+    //@ 	LDA @EZ.MA2(Y)
+    const flags = game_state.current_wave_data[
+        game_state.entity_playfield_square_flags_index[entity]
+    ];
+    //@ 	JSR CL.PR
+    set_bitmap_values_of_faces(flags, game_state);
+
+    //@ 	LDA EN.HP(X)
+    //@ 	ADD #06
+    //@ 	STA XB
+
+    //@ 	LDA EN.VP(X)
+    //@ 	SUB #03
+    //@ 	ADD @EZ.MAT(Y)
+    //@ 	NEGA
+
+    //@ 	STA YB
+    const height = game_state.current_wave_data[
+        game_state.entity_playfield_square_height_index[entity]
+    ];
+    var position = V2{
+        game_state.entity_picture_position[entity][0] + 6,
+        -(game_state.entity_picture_position[entity][1] - 3 + height) & 0xFF,
+    };
+    //@ 	LDA FC.BV3
+    const color_value = game_state.face_color_values[0];
+    const color = color_value_to_color(color_value);
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+    //@ 	INC XB
+    position[0] += 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+    //@ 	INC XB
+    position[0] += 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+
+    //@ 	DEC YB
+    position[1] -= 1;
+    //@ 	INC XB
+    position[0] += 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+    //@ 	DEC XB
+    position[0] -= 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+    //@ 	DEC XB
+    position[0] -= 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+    //@ 	DEC XB
+    position[0] -= 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+    //@ 	DEC XB
+    position[0] -= 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+
+    //@ 	DEC YB
+    position[1] -= 1;
+    //@ 	INC XB
+    position[0] += 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+    //@ 	INC XB
+    position[0] += 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+    //@ 	INC XB
+    position[0] += 1;
+    //@ 	STA VB
+    add_draw_pixel_command(color, position, game_state);
+
+    //@ 	RTS
+}
+
+//EN.PLU
+fn update_player(game_state: *GameState) void {
+
+    //@ ;---------------------------
+    //@ ;  update player,  jump etc.
+    //@ EN.JTL:
+    //@ .BYTE 00,04,08,0B,0E,11,14,16,18,1A,1C,1D,1E,1F,1F,20
+    //@ .BYTE 20,20,1F,1F,1E,1D,1C,1A,18,16,14,11,0E,0B,08,04
+    //@ EN.PLU:
+
+    //@ 	LDA EN.LMD	;  must be alive
+    //@ 	IFNE
+    if (game_state.entity_life_mode[PLAYER_ENTITY] != .Alive) {
+        //@ 	 RTS
+        return;
+        //@ 	ENDIF
+    }
+
+    //@ 	JSR EN.BRD		;  read both buttons
+    read_both_buttons(game_state);
+
+    //@ 	LDA ATRACT
+    //@ 	IFEQ
+    if (game_state.is_in_attract_mode) {
+        //@ 	 TRAI 0 EN.JBP		;  usually not jumping
+        game_state.jump_button_pressed = false;
+        //@ 	 LDA WV.TIM+1
+        //@ 	 IFNE
+        //@ 	 LDA WV.TIM
+        //@ 	 IFEQ
+        if (game_state.wave_time >= 0x100 and game_state.wave_time & 0xFF == 0) {
+            //@ 	  TRAI E.JUMP EN.JBP
+            game_state.jump_button_pressed = true;
+        }
+        //@ 	 ENDIF
+        //@ 	 ENDIF
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA EN.JFL	;  jump flag update
+    //@ 	IFEQ
+    if (!game_state.entity_jump_flag) {
+        //@ 	 LDA EN.JDL
+        //@ 	 IFEQ
+        if (game_state.entity_jump_delay == 0) {
+            //@ 	  LDA EN.JBP
+            //@ 	  AND #E.JUMP
+            //@ 	  IFNE		;  button down
+            if (game_state.jump_button_pressed) {
+                //@ 	   LDA EN.TFL	; if not in tunnel
+                //@ 	   IFEQ
+                if (!game_state.entity_in_tunnel[PLAYER_ENTITY]) {
+                    //@ 	    TRAI 0FF EN.JFL
+                    game_state.entity_jump_flag = true;
+                    //@ 	    TRAI 20 EN.JDL	;  start jump
+                    game_state.entity_jump_delay = 0x20;
+                    //@ 	    LDA #9
+                    //@ 	    JSR MN.SN1		;  jump sound
+                    //TODO: sound
+                }
+                //@ 	   ENDIF
+                //@ 	  ENDIF
+            }
+        }
+        //@ 	 ELSE
+        else {
+            //@ 	  DEC EN.JDL
+            game_state.entity_jump_delay -= 1;
+            //@ 	 ENDIF
+        }
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA EN.JFL
+    //@ 	IFNE
+    if (game_state.entity_jump_flag) {
+        //****TODO****
+        unreachable;
+        //@ 	 DEC EN.JDL
+        //@ 	 IFEQ			;  landing
+        //@ 	  LDA #2
+        //@ 	  STA EN.JDL
+        //@ 	  LDA #0
+        //@ 	  STA EN.JFL
+        //@ 	  LDA EN.MX
+        //@ 	  AND EN.MY
+        //@ 	  CMP #14
+        //@ 	  IFEQ
+        //@ 	   INC AT.OUT
+        //@ 	  ENDIF
+        //@ 	 ENDIF
+        //@ 	ENDIF
+    }
+
+    //@ 	LDA EN.JFL
+    //@ 	IFNE
+    if (game_state.entity_jump_flag) {
+        //****TODO****
+        unreachable;
+        //@ 	 LDA EN.JDL
+        //@ 	 TAY
+        //@ 	 LDA EN.JTL(Y)
+        //@ 	 STA EN.HOF
+        //@ 	ELSE
+        //@ 	 TRAI 0 EN.HOF
+        //@ 	ENDIF
+    }
+
+    //@ 	RTS
+}
+//EC.UPD
+fn update_elevators(game_state: *GameState) void {
+    //TODO
+    _ = game_state;
+}
+
+//EN.BRD
+fn read_both_buttons(game_state: *GameState) void {
+    //TODO
+    _ = game_state;
+}
+
+//EN.EWC
+fn end_of_wave_calculation(game_state: *GameState) void {
+    //@ ;-------------------------
+    //@ ;  end of wave calculation
+    //@ EN.EWC:
+
+    //@ ;  if everybody in limbo, and no gems, advance wave
+
+    //TODO: figure out what this is.  Has something to do with life mode != 3
+    //  Need to know what life mode 3 is
+    var not_sure_what_this_is = true;
+    //@ 	LDX #2
+    //@ 	BEGIN
+    for (1..MAX_NUMBER_OF_ENTITIES) |entity| {
+        //@ 	 LDA EN.LMD(X)
+        //@ 	 CMP #3
+        if (game_state.entity_life_mode[entity] != .Dead) {
+            //@ 	 BNE 20$
+            not_sure_what_this_is = false;
+            break;
+            //@ 	INXS 2
+            //@ 	CPX EN.NUM
+            //@ 	PLEND
+        }
+    }
+
+    if (not_sure_what_this_is) {
+        //@ 	LDA EN.WRF
+        //@ 	IFEQ
+        if (!game_state.entity_is_warping) {
+            //@ 	LDA CE.COC
+            //@ 	ORA CE.COC+1
+            //@ 	IFEQ		;  all gems gone
+            if (game_state.wave_gems_left == 0) {
+                //****TODO******
+                unreachable;
+                //@ 	 JSR EN.LDB	;  last dot bonus awarded
+                //@ 	 JSR WV.UPD
+                //@ 	 JSR GM.EW0	;  end of wave state
+                //@ 	ENDIF
+            }
+            //@ 	ELSE		;  end wave quickly when warping
+        } else {
+            //****TODO******
+            unreachable;
+            //@ 	JSR WV.MBF
+            //@ 	JSR WV.UPD
+            //@ 	JSR GM.EW0
+            //@ 	ENDIF
+        }
+    }
+    //@ 20$:
+
+    //@ 	LDA EN.EWM
+    //@ 	IFNE
+    if (game_state.entity_end_of_wave_mode) {
+        //@ 	 RTS
+        return;
+        //@ 	ENDIF
+    }
+
+    //@ ;  all gems gone?
+    //@ 	LDA CE.COC
+    //@ 	ORA 1+CE.COC
+    //@ 	IFEQ
+    if (game_state.wave_gems_left == 0) {
+        //@ 	 JSR EN.EW	;  end of wave
+        //****TODO******
+        unreachable;
+        //@ 	ENDIF
+    }
+
+    //****TODO******
+    //@ ;  warp
+    //@ 	LDA EN.JBP
+    //@ 	IFEQ
+    //@ 	 RTS
+    //@ 	ENDIF
+    //@ ;  button depressed
+
+    //@ 	LDA WV.XCO
+    //@ 	IFNE
+    //@ 	 JMP 55$
+    //@ 	ENDIF
+
+    //@ ;  ordinary warp
+    //@ 	IFEQA WV.YCO 0
+    //@ 	LDA EN.TFL
+    //@ 	IFNE
+    //@ 	LDA WV.WAR
+    //@ 	IFNE
+    //@ 10$:
+    //@ 	 STA TEMP5+1
+
+    //@ 	 LDA #0
+    //@ 	 STA SC.SCO
+    //@ 	 STA SC.SCO+1
+    //@ 	 STA SC.SCO+2
+    //@ 	 STA SC.INC
+    //@ 	 STA SC.INC+1
+    //@ 	 STA SC.INC+2
+    //@ 	 LDA #99
+    //@ 	 STA SC.GEM
+    //@ 	 LDX TEMP5+1
+    //@ 	 BEGIN
+    //@ 	  SED
+    //@ 	  LDA SC.INC+2
+    //@ 	  ADD #7
+    //@ 	  STA SC.INC+2
+    //@ 	  CLD
+    //@ 	  DEX
+    //@ 	 EQEND
+
+    //@ 	 LDY #4
+    //@ 	 LDX TEMP5+1
+    //@ 	 CPX #3
+    //@ 	 IFCS
+    //@ 	 LDY #5
+    //@ 	 ENDIF
+    //@ 	 LDA WV.LIV
+    //@ 	 STA TEMP1
+    //@ 	 CPY TEMP1
+    //@ 	 IFCC		;  give at least the current lives
+    //@ 	  LDY TEMP1
+    //@ 	 ENDIF
+    //@ 	 STY WV.LIV
+    //@ 	 JSR SC.UPD
+
+    //@ 	 TRAM TEMP5+1 WV.XCD	;  warp
+    //@ 	 LDX #0
+    //@ 	 STX WV.YCD
+    //@ 	 DEX
+    //@ 	 STX EN.WRF	;  end wave immediately
+    //@ 	 JMP EN.EW
+    //@ ;	 RTS
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+
+    //@ ;  secret warp #1
+    //@ 	LDA WV.YCO
+    //@ 	IFEQ
+    //@ 	IFEQA EN.MX 1
+    //@ 	IFEQA EN.MY 1
+    //@ 	 LDA #2
+    //@ 	 JMP 10$
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+
+    //@ 55$:
+
+    //@ ;  secret warp #2
+    //@ 	IFEQA WV.XCO 2
+    //@ 	IFEQA WV.YCO 0
+    //@ 	IFEQA EN.MX 3
+    //@ 	IFEQA EN.MY 3
+    //@ 	LDA EN.CDL
+    //@ 	IFNE
+    //@ 	 LDA #4
+    //@ 	 JMP 10$
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+
+    //@ ;  secret warp #3
+    //@ 	IFEQA WV.XCO 4
+    //@ 	IFEQA WV.YCO 2
+    //@ 	IFEQA EN.MX 1
+    //@ 	IFEQA EN.MY 1
+    //@ 	 LDA #6
+    //@ 	 JMP 10$
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+
+    //@ ;  FXL
+    //@ 	IFEQA WV.XCO 5
+    //@ 	IFEQA WV.YCO 3
+    //@ 	IFEQA EN.MX 1
+    //@ 	IFEQA EN.MY 1
+    //@ 	 LDA #35
+    //@ 	 JSR MS.DRW
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	ENDIF
+    //@ 	RTS
 }
 // SC.LD2:
 fn draw_lives(game_state: *GameState) void {
@@ -1055,7 +3258,7 @@ fn draw_gem_row(game_state: *GameState) void {
         //@	IFNE			;  gem present
         if (game_state.current_wave_data[game_state.castle_a2l] & 0x10 != 0) {
             //@	 INC16 CE.COC		;  increment gem count
-            game_state.gem_count += 1;
+            game_state.wave_gems_left += 1;
             //@	 JSR CT.SGD		;  draw it
             {
                 //@;--------------------------
@@ -1208,6 +3411,7 @@ fn start_of_wave(game_state: *GameState) void {
     game_state.current_state = .StartOfWave;
 
     //@	JSR MS.MWV		; draw message, if any
+    draw_beginning_of_wave_message(game_state);
 
     //@;  on block 0,0 don't draw city, for player 1
     //@	LDA PL.UP
@@ -1299,9 +3503,63 @@ fn start_of_wave(game_state: *GameState) void {
     //@ ;  init for drawing gems
     //@ CT.GIN:
     //@ 	TR16AI 0 CE.COC
-    game_state.gem_count = 0;
+    game_state.wave_gems_left = 0;
     //@ 	JSR CR.INI
     initialize_castle_row(game_state);
+    //@ 	RTS
+}
+
+//@ ;-------------------------------------------------------
+//@ ;  draw message at beginning of wave, or in attract mode
+//@ MS.MWV:
+fn draw_beginning_of_wave_message(game_state: *GameState) void {
+    //@ 	 JSR AL.BER
+    erase_board(game_state);
+    //@ 	 LDA ATRACT
+    //@ 	 IFNE
+    if (!game_state.is_in_attract_mode) {
+        //TODO:
+        unreachable;
+        //@ 	  LDA WV.XCO
+        //@ 	  STA TEMP5+1
+
+        //@ 	  LDA WV.MFL
+        //@ 	  IFNE
+
+        //@ 	  LDA WV.MNM
+        //@ 	  IFEQ		;  on wave 1
+        //@ 	   LDX WV.WAR
+        //@ 	   IFNE
+        //@ 	    STX TEMP5+1
+        //@ 	    LDA #1B
+        //@ 	   ENDIF
+        //@ 	  ELSE
+        //@ 	  CMP #1
+        //@ 	  IFEQ
+        //@ 	   LDX EEEXTR
+        //@ 	   IFNE
+        //@ 	    LDA #2B	;  if no extra life, use ordinary title
+        //@ 	   ENDIF
+        //@ 	  ENDIF
+        //@ 	  ENDIF
+        //@ 	  JSR MS.DRW	; wave titles
+        //@ 	  ENDIF
+
+        //@ 	  LDA #1F
+        //@ 	  JSR MS.DRW	; level
+
+        //@ 	  LDA TEMP5+1	;  level number
+        //@ 	  ADD #1
+        //@ 	  JSR DG.2OT
+    }
+    //@ 	 ELSE
+    else {
+        //@ 	  LDA #19	; play crystal castles
+        //@ 	  JSR MS.DRW
+        draw_message(0x19, game_state);
+        //@ 	 ENDIF
+    }
+
     //@ 	RTS
 }
 //@WV.BMV:
@@ -1364,15 +3622,15 @@ fn move_player_to_destination(destination: V2, game_state: *GameState) void {
         finished_moving = true;
         inline for (0..2) |i| {
             const delta = player_position[i] - destination[i];
-            if (delta < 0) {
+            if (u8lt(delta, 0)) {
                 player_position[i] += 4;
                 finished_moving = false;
-            } else if (delta >= 4) {
+            }
+            if (u8gte(delta, 4)) {
                 player_position.*[i] -= 4;
                 finished_moving = false;
-            } else {
-                player_position[i] = destination[i];
             }
+            player_position[i] = destination[i];
         }
 
         //@	 LDA TEMP1
@@ -1390,15 +3648,16 @@ fn init_entities(game_state: *GameState) void {
     //NOTE: en.num seems like its just used as a loop counter
     //@	TRAI 2*EN.MAX EN.NUM
 
-    //NOTE: thinking this can just be a flag passed into the subroutines that need it
     //@	LDX #0
     //@	STX EN.EWM	;  end of wave mode init
+    game_state.entity_end_of_wave_mode = false;
 
     //@	STX EN.WRF	;  warp flag
     game_state.entity_is_warping = false;
     //@	STX EN.TFL
     game_state.entity_in_tunnel[0] = false;
     //@	STX SC.GEM	;  gem counter
+    game_state.gems_collected = 0;
 
     //@	BEGIN
     for (0..MAX_NUMBER_OF_ENTITIES) |entity| {
@@ -1417,7 +3676,7 @@ fn init_entities(game_state: *GameState) void {
         //@	IFEQ
         if (entity == PLAYER_ENTITY) {
             //@	 STA EN.STA
-            game_state.entity_state[entity] = 0;
+            game_state.entity_state[entity] = .PlayerOrTree;
             //@	 TRAI 0F-3  EN.YO1
             //@	 STA	    EN.YO2
             //@	 TRAI 0FF-3 EN.YO3
@@ -1467,8 +3726,7 @@ fn init_entities(game_state: *GameState) void {
             //@	 IFEQ
             if (entity == SWARM_ENTITY) {
                 //@	  TRAI 8 EN.STA(X)
-                //TODO figure out what a state of 8 means
-                game_state.entity_state[entity] = 8;
+                game_state.entity_state[entity] = .Swarm;
             }
             //@	 ELSE
             else {
@@ -1489,7 +3747,9 @@ fn init_entities(game_state: *GameState) void {
                 const creature_table_index = (((entity_signed * 2) >> 1) - 2) + (game_state.wave_current << 3);
                 //@	  LDA DF.CRT(Y)
                 //@	  STA EN.STA(X)
-                game_state.entity_state[entity] = CREATURE_TABLE[@intCast(creature_table_index)];
+                game_state.entity_state[entity] = @enumFromInt(
+                    CREATURE_TABLE[@intCast(creature_table_index)],
+                );
 
                 //@	 ENDIF
             }
@@ -1519,7 +3779,7 @@ fn init_all_entity_positions(game_state: *GameState) void {
     //@	TRAI 2*EN.MAX EN.NUM
     //@	LDX #0
     //@	STX EN.CDL	;  init collision delay
-    game_state.entity_collition_delay = 0;
+    game_state.entity_collision_delay = 0;
 
     for (0..MAX_NUMBER_OF_ENTITIES) |entity| {
         //@	BEGIN
@@ -1544,14 +3804,14 @@ fn init_entity(entity: usize, game_state: *GameState) void {
         //@	IFEQ
         PLAYER_ENTITY => {
             //@	 STA EN.LMD	;  player is alive
-            game_state.entity_life_mode[entity] = 0;
+            game_state.entity_life_mode[entity] = .Alive;
         },
         //@	ELSE
         //@	CPX #2
         //@	IFEQ
         SWARM_ENTITY => {
             //@	 TRAI 3 EN.LMD(X);  swarm comes in later
-            game_state.entity_life_mode[entity] = 3;
+            game_state.entity_life_mode[entity] = .Dead;
         },
         //@	ELSE
         else => {
@@ -1580,13 +3840,13 @@ fn init_entity(entity: usize, game_state: *GameState) void {
                 if (!game_state.entity_is_dead[entity]) {
 
                     //@	  TRAI 2 EN.LMD(X)	;  start descent
-                    game_state.entity_life_mode[entity] = 2;
+                    game_state.entity_life_mode[entity] = .Spawning;
                     //@	  LDA EN.STA(X)
                     //@	  SUB #7
-                    if (game_state.entity_state[entity] - 7 == 0) {
+                    if (game_state.entity_state[entity] == .Honey) {
                         //@	  IFEQ
                         //@	   STA EN.LMD(X)
-                        game_state.entity_life_mode[entity] = 0;
+                        game_state.entity_life_mode[entity] = .Alive;
                         //@	  ENDIF
                     }
                     //@	 ENDIF
@@ -1594,7 +3854,7 @@ fn init_entity(entity: usize, game_state: *GameState) void {
                 //@	ELSE
                 else {
                     //@	 TRAI 3 EN.LMD(X)
-                    game_state.entity_life_mode[entity] = 3;
+                    game_state.entity_life_mode[entity] = .Dead;
                     //@	ENDIF
                 }
                 //@	ENDIF
@@ -1650,7 +3910,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
             //@	  LDA EN.STA(X)
             //@	  CMP #8
             //@	  IFEQ
-            if (game_state.entity_state[entity] == 8) {
+            if (game_state.entity_state[entity] == .Swarm) {
                 //@	   LDA WV.TIM+1
                 //@	   STA RS.KEY+1		; key of swarm sound
                 game_state.tune_table_keys[1] = (game_state.wave_time >> 8) & 0xFF;
@@ -1698,7 +3958,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
             //@	   LDA #0FF
             //@	  ENDIF
             //@	  STA EN.BLK(X)
-            game_state.entity_blanking_flag[entity] = game_state.entity_state[entity] != 7;
+            game_state.entity_blanking_flag[entity] = game_state.entity_state[entity] != .Honey;
 
             //@	  TRAI 0 EN.ANV(X)	;  animation variable init
             game_state.entity_animation[entity] = 0;
@@ -1714,7 +3974,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
 
             //@	  LDA EN.STA(X)
             //@	  IFEQ
-            if (game_state.entity_state[entity] == 0) {
+            if (game_state.entity_state[entity] == .PlayerOrTree) {
                 //@	   STA 1+EN.DEL(X)
                 //@	   LDY WV.DF2
                 //@	   TRAM DF.TRG(Y) EN.DEL(X)	; tree growing time
@@ -1731,7 +3991,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
                 //@	  ENDIF
                 //@	  ENDIF
                 game_state.entity_delay[entity] =
-                    if (game_state.entity_state[entity] == 8)
+                    if (game_state.entity_state[entity] == .Swarm)
                     0x140
                 else
                     0x20;
@@ -1769,18 +4029,18 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         //NOTE: the playfield is column-major
 
         //NOTE this is EN.OFF
-        const playfield_offset: usize =
+        const playfield_index: usize =
             @intCast(
             entity_playfield_position[0] * PLAYFIELD_HEIGHT +
                 entity_playfield_position[1],
         );
         //@	AD16AM EN.MAT(X) EN.OFF
-        game_state.entity_playfield_offset[entity] = playfield_offset;
+        game_state.entity_playfield_square_height_index[entity] = playfield_index;
 
         //@	TR16AM EN.MAT(X) EN.MA2(X)
         //@	AD16AI EN.MA2(X) 16*16
-        game_state.entity_playfield_offset2[entity] =
-            PLAYFIELD_WIDTH * PLAYFIELD_HEIGHT + playfield_offset;
+        game_state.entity_playfield_square_flags_index[entity] =
+            PLAYFIELD_WIDTH * PLAYFIELD_HEIGHT + playfield_index;
 
         //@	TR16AM EN.MAT(X) EZ.MAT
         //@	TR16AM EN.MA2(X) EZ.MA2
@@ -1788,7 +4048,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         //@	TRAM @EZ.MAT(Y) EN.HEI(X)
         game_state.entity_height[entity] =
             game_state.current_wave_data[
-            game_state.entity_playfield_offset[entity]
+            game_state.entity_playfield_square_height_index[entity]
         ];
 
         //@;  height at 1 1 must not be 0 !!!!!!!! otherwise
@@ -1865,9 +4125,10 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
     //@; priority
     //@	LDY #0
     //@	LDA @EZ.MA2(Y)
-    const some_value =
+    //TODO: figure out what these flags are
+    const flags =
         game_state.current_wave_data[
-        game_state.entity_playfield_offset2[PLAYER_ENTITY]
+        game_state.entity_playfield_square_flags_index[PLAYER_ENTITY]
     ];
     //@	AND #40
     //@	IFNE
@@ -1876,7 +4137,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
     //@	 TRAI 0FF EN.PR1(X)
     //@	ENDIF
     game_state.entity_priority[entity][0] =
-        if (some_value & 0x40 != 0) 0 else -1;
+        if (flags & 0x40 != 0) 0 else -1;
 
     //@; fine x,y
     //@	TRAI 10 EN.IX(X)
@@ -1889,7 +4150,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
     //@	IFNE
     //@	CPX #0
     //@	IFNE
-    if (game_state.entity_life_mode[entity] != 3 and
+    if (game_state.entity_life_mode[entity] != .Dead and
         entity != PLAYER_ENTITY)
     {
 
@@ -1897,8 +4158,8 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         //@	 ORA #08
         //@	 STA @EZ.MA2(Y)
         game_state.current_wave_data[
-            game_state.entity_playfield_offset2[PLAYER_ENTITY]
-        ] |= 8;
+            game_state.entity_playfield_square_flags_index[PLAYER_ENTITY]
+        ] |= 0b00001000;
 
         //@	ENDIF
 
@@ -2025,11 +4286,12 @@ fn draw_motion_objects(
     // a struct of picture objects that we will modify.  In addition, I've gotten rid of the double buffer
     // which is unncessary here.
     for (0..MOTION_OBJECTS_PER_ENTITY) |i| {
-        const motion_object = &game_state.motion_objects[motion_objects_cursor.*];
-        const effective_position = game_state.entity_position[entity] +
+        const motion_object =
+            &game_state.motion_objects[motion_objects_cursor.*];
+        const effective_position =
+            game_state.entity_position[entity] +
             game_state.entity_motion_object_offsets[entity][i];
-        // if (effective_position[0] == 252)
-        //     @breakpoint();
+
         motion_object.* = .{
             .picture_number = game_state.entity_picture[entity][i],
             .position = effective_position,
@@ -2037,6 +4299,23 @@ fn draw_motion_objects(
         };
         motion_objects_cursor.* += 1;
     }
+}
+//@ ;---------------------
+//@ ;  plunger pictures
+//@ EN.PLP:
+fn fill_plunger_pictures(entity: usize, game_state: *GameState) void {
+    //@ 50$:	.BYTE 080,084,088,084
+    const PLUNGER_PICTURE_NUMBERS = [_]isize{ 0x80, 0x84, 0x88, 0x84 };
+    //@ 	LDA FRAME
+    //@ 	AND #^B00110000
+    //@ 	LSRS 4
+    //@ 	TAY
+    const picture_index: usize = @intCast((game_state.frame & 0b00110000) >> 4);
+    //@ 	LDA 50$(Y)
+    const picture_number = PLUNGER_PICTURE_NUMBERS[picture_index];
+    //@ 	JSR EN.PCF
+    fill_entity_pictures(picture_number, entity, game_state);
+    //@ 	RTS
 }
 
 //@ ;----------------------
@@ -2273,6 +4552,97 @@ const MESSAGE_DATA = [_][]const u8{
     &.{
         0x60, 0x80, 0xE, 0xF,
     },
+    //@ ;  option screen
+    //@ MC.M12:
+    &.{
+        0x30, 0x30,
+        7,    0x13,
+        0x81, 0,
+        0,    0,
+        0xB,  0x8B,
+        0,    0,
+        0x72, 0x8C,
+        0x8B, 0,
+        0,    0x73,
+        0x8C, 0x8B,
+        0,    0,
+        0x13, 0x49,
+        0,    0,
+        0x4D, 0xA1,
+        0,    0,
+        0x2D, 0xA1,
+        0,    0,
+        0x65, 0x81,
+        0,    0,
+        0x84,
+    },
+
+    //@ ;  insert coin
+    //@ MC.M13:
+    &.{
+        0xB1, 0x48, 0, 0xA, 0xB,
+    },
+
+    //@ ;  game over
+    //@ MC.M14:
+    &.{
+        0x60, 0x80, 0x13, 0xD,
+    },
+
+    //@ ;  player 1
+    //@ MC.M15:
+    &.{
+        0x60, 0x88, 0x14, 0x15,
+    },
+
+    //@ ;  player 2
+    //@ MC.M16:
+    &.{
+        0x60, 0x88, 0x14, 0x16,
+    },
+
+    //@ ;  checksum for rom at pc etc.
+    //@ MC.M17:
+    &.{
+        0x20, 0x70,
+        0x2A, 0x20,
+        0x91, 0,
+        0x2A, 0x20,
+        0x92, 0,
+        0x2A, 0x20,
+        0x93, 0,
+        0x2A, 0x20,
+        0x94, 0,
+        0x2A, 0x20,
+        0x95,
+    },
+    //@ ;  use secret warp number 1
+    //@ ;  jump at back corner of maze 1 level 1
+    //@ MC.M18:
+    &.{
+        0x40, 0xC0,
+        0x96, 0x61,
+        0x97, 0x15,
+        0,    0x8A,
+        0x98, 0xA2,
+        0x99, 0x5B,
+        5,    0x47,
+        0x15, 5,
+        0x2B, 0x15,
+    },
+    //@ ;  atract mode messages
+    //@ ;  crystal castles  copyright atari 1983
+    //@ MC.M19:
+    &.{
+        0xB1, 0x2C,
+        2,    0x18,
+        2,    0x19,
+        0,    0,
+        0x21, 0,
+        0x22, 0,
+        0x23, 1,
+        0x24,
+    },
 };
 
 //MS.DRW
@@ -2309,7 +4679,7 @@ fn draw_message(message_number: usize, game_state: *GameState) void {
         var word_number: isize = msg[i];
         //@ CMP #0A			;  if not CR-directive
         //@ IFCS
-        if (word_number >= 0xA) {
+        if (u8gte(word_number, 0xA)) {
             //@  JSR WR.DRW
             draw_word(
                 word_number,
@@ -2576,7 +4946,7 @@ fn update_current_wave_and_difficulty(game_state: *GameState) void {
     //@	ADD WV.YCO
     //@	STA WV.DF1	;  short term difficulty
     game_state.wave_short_term_difficulty =
-        @min(3, game_state.wave_xco) * 4 +
+        @min(3, game_state.wave_xco & 0xFF) * 4 +
         game_state.wave_yco;
 
     //@	LDA WV.XCO
@@ -2585,7 +4955,7 @@ fn update_current_wave_and_difficulty(game_state: *GameState) void {
     //@	 LDA #09
     //@	ENDIF
     //@	STA WV.DF2	;  long term difficulty
-    game_state.wave_long_term_difficulty = @min(9, game_state.wave_xco);
+    game_state.wave_long_term_difficulty = @min(9, game_state.wave_xco & 0xFF);
 
     //@	TAY
     //@;  difficulty offset
@@ -2609,7 +4979,7 @@ fn update_current_wave_and_difficulty(game_state: *GameState) void {
     //@	IFCS
     //@	 LDA #0		;  all are equal starting at level 6
     //@	ENDIF
-    if (game_state.wave_xco >= 5) {
+    if (u8gte(game_state.wave_xco, 5)) {
         difficulty_offset = 0;
     }
 
@@ -3328,6 +5698,7 @@ fn draw_digit(
     //@	SBAI 6 SC.LEF
     pixels_left_to_erase.* -= 6;
     //@50$:
+    //@RTS
 }
 
 //MN.SCI
@@ -4182,7 +6553,7 @@ fn add_draw_command(
         .{},
     );
     toolbox.assert(
-        command.shape != .Character or command.character >= '0',
+        command.shape != .Character or command.character >= ' ',
         "Bad character value: {}",
         .{command.character},
     );
@@ -4217,6 +6588,15 @@ fn to_isize(comptime n: comptime_int) isize {
     }
     return @as(isize, n);
     // return n;
+}
+
+//8-bit unsigned >=
+inline fn u8gte(a: isize, b: isize) bool {
+    return (a & 0xFF) >= (b & 0xFF);
+}
+//8-bit unsigned <
+inline fn u8lt(a: isize, b: isize) bool {
+    return (a & 0xFF) < (b & 0xFF);
 }
 
 fn check_and_display_atari_easter_egg() void {

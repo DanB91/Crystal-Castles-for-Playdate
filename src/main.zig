@@ -152,9 +152,10 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
                     platform_state.motion_object_tiles,
                     @intCast(mo.picture_number),
                 ).?;
-                const x: pdapi.Pixel = @intCast(mo.position[0]);
-                const y: pdapi.Pixel = @intCast(256 - 16 - mo.position[1] - cc.Y_COORDINATE_OFFSET);
-                pdapi.draw_bitmap(tile, x, y, .BitmapUnflipped);
+                const x: pdapi.Pixel = @intCast(mo.position[0] & 0xFF);
+                const y: pdapi.Pixel = @intCast(256 - 16 - (mo.position[1] & 0xFF));
+
+                pdapi.draw_bitmap(tile, x, y - cc.Y_COORDINATE_OFFSET, .BitmapUnflipped);
             }
         }
     }
@@ -259,20 +260,22 @@ fn draw_debug_and_profiler_hud(
     lines.append(toolbox.str8lit(""));
 
     //TODO: this is too many lines.  need smaller font
-    _ = game_state;
-    // {
-    //     for (game_state.motion_objects) |mo| {
-    //         const x: pdapi.Pixel = @intCast(mo.position[0]);
-    //         const y: pdapi.Pixel = @intCast(256 - 16 - mo.position[1] - cc.Y_COORDINATE_OFFSET);
-    //         const str = toolbox.str8fmt(
-    //             "Sprite : Tile: {}, X: {}, Y: {}, flags: {}",
-    //             .{ mo.picture_number, x, y, mo.flags },
-    //             platform_state.frame_arena,
-    //         );
-    //         lines.append(str);
-    //         background_width = @max(background_width, pdapi.get_text_width(str.bytes));
-    //     }
-    // }
+    // _ = game_state;
+    {
+        for (game_state.motion_objects) |mo| {
+            const x: pdapi.Pixel = @intCast(mo.position[0]);
+            const y: pdapi.Pixel = @intCast(256 - 16 - (mo.position[1] & 0xFF) - cc.Y_COORDINATE_OFFSET);
+            if (mo.picture_number != 0) {
+                const str = toolbox.str8fmt(
+                    "Sprite : Tile: {}, X: {}, Y: {}, flags: {}",
+                    .{ mo.picture_number, x, y, mo.flags },
+                    platform_state.frame_arena,
+                );
+                lines.append(str);
+                background_width = @max(background_width, pdapi.get_text_width(str.bytes));
+            }
+        }
+    }
     if (comptime ENABLE_PROFILER) {
         const stats = toolbox.profiler.compute_statistics_of_current_state(
             platform_state.frame_arena,

@@ -14,7 +14,6 @@ pub fn playdate_panic(
 ) noreturn {
     _ = error_return_trace;
     _ = return_address;
-    @breakpoint();
 
     switch (comptime builtin.os.tag) {
         .freestanding => {

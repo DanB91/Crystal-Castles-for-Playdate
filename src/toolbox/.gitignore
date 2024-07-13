@@ -12,3 +12,4 @@ crossllvm
 build
 zig-cache
 zig-out
+.zig-cache
