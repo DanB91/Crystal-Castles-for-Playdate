@@ -40,16 +40,24 @@ pub fn is_string_type(comptime Type: type) bool {
     }
 }
 
-pub fn child_type(comptime Type: type) type {
-    const ti = @typeInfo(Type);
+pub fn ChildType(comptime T: type) type {
+    const ti = @typeInfo(T);
     switch (comptime ti) {
         .Pointer => |info| {
             return info.child;
         },
+        .Optional => |info| {
+            return info.child;
+        },
         else => {
-            @compileError("Must be a pointer type!");
+            @compileError("Must be a pointer or optional type!");
         },
     }
+}
+
+pub fn is_optional(x: anytype) bool {
+    const ti = @typeInfo(@TypeOf(x));
+    return ti == .Optional;
 }
 
 pub fn enum_size(comptime T: type) usize {

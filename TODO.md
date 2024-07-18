@@ -1,3 +1,4 @@
+- Add memory consumption
 - When the player turns left, the sprite doesn't change as it should
 - Missing movement of enemy
 - Score has trailing zeroes

@@ -244,20 +244,18 @@ fn draw_debug_and_profiler_hud(
     var background_width: pdapi.Pixel = 0;
 
     //TODO draw profiler and other stats
-    var lines = toolbox.DynamicArray(toolbox.String8).init(
-        platform_state.frame_arena,
-        32,
-    );
+    var lines = toolbox.DynamicArray(toolbox.String8){};
+    const arena = platform_state.frame_arena;
     {
         const str = toolbox.str8fmt(
             "# draw commands: {}",
             .{command_count},
-            platform_state.frame_arena,
+            arena,
         );
-        lines.append(str);
+        lines.append(str, arena);
         background_width = pdapi.get_text_width(str.bytes);
     }
-    lines.append(toolbox.str8lit(""));
+    lines.append(toolbox.str8lit(""), arena);
 
     //TODO: this is too many lines.  need smaller font
     // _ = game_state;
@@ -271,7 +269,7 @@ fn draw_debug_and_profiler_hud(
                     .{ mo.picture_number, x, y, mo.flags },
                     platform_state.frame_arena,
                 );
-                lines.append(str);
+                lines.append(str, arena);
                 background_width = @max(background_width, pdapi.get_text_width(str.bytes));
             }
         }
@@ -287,18 +285,18 @@ fn draw_debug_and_profiler_hud(
                 platform_state.frame_arena,
             );
             background_width = @max(background_width, pdapi.get_text_width(str.bytes));
-            lines.append(str);
+            lines.append(str, arena);
         }
         for (stats.section_statistics.items()) |stat| {
             const str = stat.str8(platform_state.frame_arena);
             background_width = @max(background_width, pdapi.get_text_width(str.bytes));
-            lines.append(str);
+            lines.append(str, arena);
         }
     }
 
     const background_height = pdapi.get_font_height() * @as(
         pdapi.Pixel,
-        @intCast(lines.len()),
+        @intCast(lines.len),
     );
     pdapi.fill_rect(
         0,
