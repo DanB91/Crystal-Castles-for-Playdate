@@ -17,7 +17,8 @@ pub fn DynamicArray(comptime T: type) type {
         }
 
         pub fn append(self: *Self, value: T, arena: *toolbox.Arena) void {
-            if (self.cap <= self.len) {
+            const expected_cap = self.len + 1;
+            if (self.cap < expected_cap) {
                 self.expand(@max(
                     self.cap * 2,
                     DYNAMIC_ARRAY_INITIAL_CAPACITY,
@@ -25,6 +26,17 @@ pub fn DynamicArray(comptime T: type) type {
             }
             self.ptr[self.len] = value;
             self.len += 1;
+        }
+        pub fn append_slice(self: *Self, slice: []T, arena: *toolbox.Arena) void {
+            const expected_cap = slice.len + self.len;
+            if (self.cap < expected_cap) {
+                self.expand(@max(
+                    expected_cap * 2,
+                    DYNAMIC_ARRAY_INITIAL_CAPACITY,
+                ), arena);
+            }
+            @memcpy(self.ptr[self.len .. self.len + slice.len], slice);
+            self.len += slice.len;
         }
         pub fn expand(self: *Self, new_capacity: usize, arena: *toolbox.Arena) void {
             if (self.cap >= new_capacity) {
@@ -70,6 +82,25 @@ pub fn DynamicArray(comptime T: type) type {
             .Struct => sort_struct_reverse,
             else => @compileError("Unsupported type " ++ @typeName(T) ++ " for DynamicArray"),
         };
+        pub fn format(
+            self: *const Self,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            try writer.writeAll("{");
+            for (self.items(), 0..) |item, i| {
+                try std.fmt.format(writer, "{}", .{item});
+                if (i < self.len - 1) {
+                    if ((i + 1) % 4 == 0) {
+                        try writer.writeAll(",\n");
+                    } else {
+                        try writer.writeAll(", ");
+                    }
+                }
+            }
+            try writer.writeAll("}");
+        }
 
         fn sort_number(self: *Self) void {
             std.sort.block(T, self.items(), self, struct {

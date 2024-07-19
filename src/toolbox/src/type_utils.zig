@@ -1,4 +1,5 @@
 const toolbox = @import("toolbox.zig");
+const std = @import("std");
 pub fn is_iterable(x: anytype) bool {
     const T = if (@TypeOf(x) == type) x else @TypeOf(x);
     const ti = @typeInfo(T);
@@ -70,4 +71,56 @@ pub fn ptr_cast(comptime T: type, ptr: anytype) T {
         @compileError("T in ptr_cast must be a pointer");
     }
     return @as(T, @ptrCast(@alignCast(ptr)));
+}
+
+pub fn format_struct(
+    value: anytype,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    const Type = @TypeOf(value);
+    const ti = if (@typeInfo(Type) == .Pointer)
+        @typeInfo(@typeInfo(Type).Pointer.child)
+    else
+        @typeInfo(Type);
+    inline for (ti.Struct.fields, 0..) |field, i| {
+        const name = field.name;
+        try writer.writeAll(name ++ ": ");
+        switch (@typeInfo(field.type)) {
+            .Int, .ComptimeInt => {
+                if (std.mem.eql(u8, fmt, "X") or std.mem.eql(u8, fmt, "x")) {
+                    try writer.writeAll("0x");
+                }
+                try std.fmt.formatIntValue(
+                    @field(value, name),
+                    fmt,
+                    options,
+                    writer,
+                );
+            },
+            else => {
+                if (field.type == []const u8) {
+                    try std.fmt.format(
+                        writer,
+                        "{s}",
+                        .{@field(value, name)},
+                    );
+                } else {
+                    try std.fmt.format(
+                        writer,
+                        "{}",
+                        .{@field(value, name)},
+                    );
+                }
+            },
+        }
+        if (i != ti.Struct.fields.len - 1) {
+            if ((i + 1) % 4 == 0) {
+                try writer.writeAll("\n");
+            } else {
+                try writer.writeAll(", ");
+            }
+        }
+    }
 }

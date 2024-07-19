@@ -22,22 +22,17 @@ pub fn HashMap(comptime Key: type, comptime Value: type) type {
         pub const Iterator = struct {
             hash_map: *const Self,
             cursor: usize = 0,
-            keys_found: usize = 0,
 
-            pub fn next(self: *Iterator) ?*KeyValue {
-                if (self.keys_found == self.hash_map.len) {
-                    return null;
-                }
+            pub fn next(self: *Iterator) ?KeyValue {
                 while (self.cursor < self.hash_map.keys.len) : (self.cursor += 1) {
-                    if (self.hash_map.keys[self.cursor]) |key| {
-                        self.keys_found += 1;
+                    if (self.hash_map.keys.items()[self.cursor]) |key| {
                         return .{
                             .k = key,
-                            .v = self.hash_map.values[self.cursor],
+                            .v = self.hash_map.values.items()[self.cursor],
                         };
                     }
-                    return null;
                 }
+                return null;
             }
         };
 
@@ -260,7 +255,6 @@ pub fn HashMap(comptime Key: type, comptime Value: type) type {
 
         pub fn iterator(self: *const Self) Iterator {
             return .{
-                .it = self.indices.iterator(),
                 .hash_map = self,
             };
         }

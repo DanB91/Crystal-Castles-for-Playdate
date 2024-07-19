@@ -203,63 +203,6 @@ fn run_tests() !void {
 
     var arena = toolbox.Arena.init(toolbox.mb(1));
     defer arena.free_all();
-    //Linked list queue
-    // {
-    //     defer arena.reset();
-    //     var list = toolbox.LinkedListQueue(i64).init(arena);
-    //     const first_element = list.push(42);
-    //     toolbox.expect(list.len == 1, "List should be length 1", .{});
-    //     toolbox.expect(first_element.* == 42, "Node should have a value of 42", .{});
-    //     toolbox.expect(&list.head.?.value == first_element, "List head should be the same as the first node", .{});
-    //     toolbox.expect(&list.tail.?.value == first_element, "List tail should be the same as its only node", .{});
-
-    //     const second_element = list.push(42 * 2);
-    //     _ = list.push(42 * 3);
-
-    //     toolbox.expect(list.len == 3, "List should be length 3", .{});
-    //     toolbox.expect(&list.head.?.value == first_element, "List head should be the same as the first node", .{});
-
-    //     {
-    //         var i: i64 = 1;
-    //         var it = list.iterator();
-    //         while (it.next()) |value| {
-    //             toolbox.expect(
-    //                 value.* == 42 * i,
-    //                 "Value for linked list node is wrong. Expected: {}, Actual: {} ",
-    //                 .{ 42 * i, value.* },
-    //             );
-    //             i += 1;
-    //         }
-    //     }
-
-    //     const last_value = list.pop();
-    //     toolbox.expect(last_value == 42 * 1, "Pop gave wrong value", .{});
-    //     toolbox.expect(&list.head.?.value == second_element, "first_element should be removed", .{});
-    //     toolbox.expect(list.len == 2, "List should be length 2 after removal", .{});
-
-    //     list.clear();
-    //     toolbox.expect(list.len == 0 and list.head == null and list.tail == null, "clear list didn't clear", .{});
-    // }
-
-    //Linked list stack
-    // {
-    //     var list = toolbox.LinkedListStack(i64).init(arena);
-    //     _ = list.push(42 * 1);
-    //     _ = list.push(42 * 2);
-    //     _ = list.push(42 * 3);
-    //     {
-    //         var i: i64 = 3;
-    //         var it = list.iterator();
-    //         while (it.next()) |value| {
-    //             toolbox.expect(
-    //                 value.* == 42 * i,
-    //                 "Value for linked list node is wrong. Expected: {}, Actual: {} ",
-    //                 .{ 42 * i, value.* },
-    //             );
-    //             i -= 1;
-    //         }
-    //     }
-    // }
 
     //Random removal Linked list
     {
@@ -342,85 +285,6 @@ fn run_tests() !void {
         }
     }
 
-    {
-        defer arena.reset();
-        const IntNode = struct {
-            value: i64,
-            next: ?*@This() = null,
-            prev: ?*@This() = null,
-        };
-        var free_list: ?*IntNode = null;
-        var list = toolbox.RandomRemovalLinkedList(IntNode){};
-        const first_element = list.append_value(.{ .value = 42 }, arena, &free_list);
-        toolbox.expect(list.len == 1, "List should be length 1", .{});
-        toolbox.expect(first_element.value == 42, "Node should have a value of 42", .{});
-        toolbox.expect(list.head.? == first_element, "List head should be the same as the first node", .{});
-        toolbox.expect(list.tail.? == first_element, "List tail should be the same as its only node", .{});
-
-        const second_element = list.append_value(.{ .value = 42 * 2 }, arena, &free_list);
-        const third_element = list.append_value(.{ .value = 42 * 3 }, arena, &free_list);
-
-        toolbox.expect(list.len == 3, "List should be length 3", .{});
-        toolbox.expect(second_element.value == 42 * 2, "Second element is wrong value", .{});
-        toolbox.expect(third_element.value == 42 * 3, "Third element is wrong value", .{});
-        toolbox.expect(list.head.? == first_element, "List head should be the same as the first node", .{});
-
-        toolbox.expecteq(null, free_list, "Free list should be empty!");
-        {
-            var i: i64 = 1;
-            var it = list.iterator();
-            while (it.next()) |node| {
-                toolbox.expect(
-                    node.value == 42 * i,
-                    "Value for linked list node is wrong. Expected: {}, Actual: {} ",
-                    .{ 42 * i, node.value },
-                );
-                if (node == second_element) {
-                    list.remove(node, &free_list);
-                }
-                i += 1;
-            }
-        }
-
-        toolbox.expect(list.len == 2, "List should be length 2", .{});
-        toolbox.expect(free_list != null, "Free list should be not empty!", .{});
-        {
-            var i: i64 = 1;
-            var it = list.iterator();
-            while (it.next()) |node| {
-                toolbox.expect(
-                    node.value == 42 * i,
-                    "Value for linked list node is wrong. Expected: {}, Actual: {} ",
-                    .{ 42 * i, node.value },
-                );
-                i += 2;
-            }
-        }
-
-        const zeroth_element = list.prepend_value(
-            .{ .value = 42 * 0 },
-            arena,
-            &free_list,
-        );
-        toolbox.expecteq(null, free_list, "Free list should be empty!");
-        toolbox.expect(list.len == 3, "List should be length 3", .{});
-        toolbox.expect(zeroth_element.value == 42 * 0, "0th element is wrong value", .{});
-        {
-            var i: i64 = 0;
-            var it = list.iterator();
-            while (it.next()) |node| {
-                toolbox.expect(
-                    node.value == 42 * i,
-                    "Value for linked list node is wrong. Expected: {}, Actual: {} ",
-                    .{ 42 * i, node.value },
-                );
-                i += 1;
-                if (i == 2) {
-                    i = 3;
-                }
-            }
-        }
-    }
     //Hash map
     {
         defer arena.reset();
@@ -567,6 +431,26 @@ fn run_tests() !void {
             toolbox.expecteq(s.contains(not_substring2), false, "Should not contain");
         }
     }
+    //string builder
+    {
+        defer arena.reset();
+        var sb = toolbox.StringBuilder{};
+        sb.append_fmt("Hello! {}\n", .{123}, arena);
+        sb.append_fmt("こんにちは!! {}", .{123}, arena);
+        const str = sb.str8();
+        const expected = toolbox.str8lit("Hello! 123\nこんにちは!! 123");
+
+        toolbox.expect(
+            std.mem.eql(u8, str.bytes, expected.bytes),
+            "String builder bytes incorrect!",
+            .{},
+        );
+        toolbox.expecteq(
+            str.rune_length,
+            expected.rune_length,
+            "String builder rune lengths incorrect!",
+        );
+    }
     //stack
     //TODO
     {}
@@ -679,6 +563,7 @@ fn run_tests() !void {
         da.append(4, arena);
         toolbox.assert(da.len == 4, "Unexpected dynamic array length: {}", .{da.len});
         toolbox.assert(da.cap == toolbox.DYNAMIC_ARRAY_INITIAL_CAPACITY, "Unexpected dynamic array capacity: {}", .{da.len});
+        toolbox.println("Dynamic array print: {}", .{da});
     }
     //fibers
     {
@@ -687,6 +572,17 @@ fn run_tests() !void {
         fiber.go(&fiber_test, .{});
         fiber.go(&fiber_test, .{});
         while (fiber.number_of_fibers_active() > 1) {}
+    }
+    //struct formatter
+    {
+        const S = struct {
+            a: usize = 0x1234,
+            b: []const u8 = "Hello!",
+
+            pub const format = toolbox.format_struct;
+        };
+        toolbox.println("Struct formatter hex: {X}", .{S{}});
+        toolbox.println("Struct formatter decimal: {}", .{S{}});
     }
     //profiler
     {

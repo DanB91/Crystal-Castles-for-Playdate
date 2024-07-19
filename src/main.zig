@@ -240,37 +240,68 @@ fn draw_debug_and_profiler_hud(
     platform_state: *PlatformState,
     command_count: usize,
 ) void {
+    const F = struct {
+        fn add_line(
+            comptime fmt: []const u8,
+            args: anytype,
+            lines: *toolbox.DynamicArray(toolbox.String8),
+            background_width: *i32,
+            arena: *toolbox.Arena,
+        ) void {
+            const str = toolbox.str8fmt(fmt, args, arena);
+            lines.append(str, arena);
+            background_width.* = pdapi.get_text_width(str.bytes);
+        }
+    };
     const game_state = platform_state.game_state;
     var background_width: pdapi.Pixel = 0;
 
     //TODO draw profiler and other stats
     var lines = toolbox.DynamicArray(toolbox.String8){};
     const arena = platform_state.frame_arena;
-    {
-        const str = toolbox.str8fmt(
+    if (false) {
+        F.add_line(
             "# draw commands: {}",
             .{command_count},
+            &lines,
+            &background_width,
             arena,
         );
-        lines.append(str, arena);
-        background_width = pdapi.get_text_width(str.bytes);
     }
     lines.append(toolbox.str8lit(""), arena);
 
+    //player position
+    {
+        F.add_line(
+            "x: {X}, y: {X}",
+            .{ game_state.entity_position[0][0], game_state.entity_position[0][1] },
+            &lines,
+            &background_width,
+            arena,
+        );
+        F.add_line(
+            "fine x: {X}, fine y: {X}",
+            .{ game_state.entity_fine_position[0][0], game_state.entity_fine_position[0][1] },
+            &lines,
+            &background_width,
+            arena,
+        );
+    }
+
     //TODO: this is too many lines.  need smaller font
     // _ = game_state;
-    {
+    if (false) {
         for (game_state.motion_objects) |mo| {
             const x: pdapi.Pixel = @intCast(mo.position[0]);
             const y: pdapi.Pixel = @intCast(256 - 16 - (mo.position[1] & 0xFF) - cc.Y_COORDINATE_OFFSET);
             if (mo.picture_number != 0) {
-                const str = toolbox.str8fmt(
+                F.add_line(
                     "Sprite : Tile: {}, X: {}, Y: {}, flags: {}",
                     .{ mo.picture_number, x, y, mo.flags },
-                    platform_state.frame_arena,
+                    &lines,
+                    &background_width,
+                    arena,
                 );
-                lines.append(str, arena);
-                background_width = @max(background_width, pdapi.get_text_width(str.bytes));
             }
         }
     }
@@ -279,18 +310,23 @@ fn draw_debug_and_profiler_hud(
             platform_state.frame_arena,
         );
         {
-            const str = toolbox.str8fmt(
+            F.add_line(
                 "Frame Time: {}mcs",
                 .{stats.total_elapsed.microseconds()},
-                platform_state.frame_arena,
+                &lines,
+                &background_width,
+                arena,
             );
-            background_width = @max(background_width, pdapi.get_text_width(str.bytes));
-            lines.append(str, arena);
         }
         for (stats.section_statistics.items()) |stat| {
             const str = stat.str8(platform_state.frame_arena);
-            background_width = @max(background_width, pdapi.get_text_width(str.bytes));
-            lines.append(str, arena);
+            F.add_line(
+                "{}",
+                .{str},
+                &lines,
+                &background_width,
+                arena,
+            );
         }
     }
 
