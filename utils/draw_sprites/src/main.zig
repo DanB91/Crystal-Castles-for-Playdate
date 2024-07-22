@@ -51,44 +51,55 @@ pub fn main() !void {
     //     px.* = COLORS[@intCast(px.*)];
     // }
     // _ = c.stbi_write_png("sprites-table-8-16.png", IMAGE_W, IMAGE_H, 4, &screen, IMAGE_W * 4);
-    test_in_terminal();
+    // test_in_terminal();
+    draw_motion_object_in_terminal(0xE4, 2);
 }
-fn test_in_terminal() void {
+
+fn draw_motion_object_in_terminal(tile_start: usize, comptime num_tiles: usize) void {
     const SCREEN_W = 16;
-    const SCREEN_H = 32;
-    //const motion_object = 0;
-    for (0x1..0x2) |motion_object| {
-        var screen = [_]u32{0} ** (SCREEN_H * SCREEN_W);
-        var xpos: usize = 0;
-        var ypos: usize = 0;
-        const NUM_TILES = 4;
-        const tile_offset = motion_object * NUM_TILES + 1;
-        for (tile_offset..tile_offset + NUM_TILES, 0..) |tile, i| {
-            draw_tile(tile, xpos, ypos, SCREEN_W, &screen);
-            switch (i) {
-                0 => {
-                    xpos = 8;
-                    ypos = 0;
-                },
-                1 => {
-                    xpos = 0;
-                    ypos = 16;
-                },
-                2 => {
-                    xpos = 8;
-                    ypos = 16;
-                },
-                3 => {},
-                else => unreachable,
-            }
+    const SCREEN_H = if (num_tiles == 2) 16 else 32;
+    var screen = [_]u32{0} ** (SCREEN_H * SCREEN_W);
+    var xpos: usize = 0;
+    var ypos: usize = 0;
+    const tile_offset = tile_start;
+    for (tile_offset..tile_offset + num_tiles, 0..) |tile, i| {
+        draw_tile(tile, xpos, ypos, SCREEN_W, &screen);
+        switch (i) {
+            0 => {
+                xpos = 8;
+                ypos = 0;
+            },
+            1 => {
+                xpos = 0;
+                ypos = 16;
+            },
+            2 => {
+                xpos = 8;
+                ypos = 16;
+            },
+            3 => {},
+            else => unreachable,
         }
-        for (0..SCREEN_H) |y| {
-            for (0..SCREEN_W) |x| {
-                const color = STDOUT_COLORS[@intCast(screen[y * SCREEN_W + x])];
-                std.debug.print("{s}", .{color});
-            }
-            std.debug.print("\n", .{});
+    }
+    for (0..SCREEN_H) |y| {
+        for (0..SCREEN_W) |x| {
+            const color = STDOUT_COLORS[@intCast(screen[y * SCREEN_W + x])];
+            std.debug.print("{s}", .{color});
         }
+        std.debug.print("\n", .{});
+    }
+}
+fn draw_tile_in_terminal(tile: usize) void {
+    const SCREEN_W = 8;
+    const SCREEN_H = 16;
+    var screen = [_]u32{0} ** (SCREEN_H * SCREEN_W);
+    draw_tile(tile, 0, 0, SCREEN_W, &screen);
+    for (0..SCREEN_H) |y| {
+        for (0..SCREEN_W) |x| {
+            const color = STDOUT_COLORS[@intCast(screen[y * SCREEN_W + x])];
+            std.debug.print("{s}", .{color});
+        }
+        std.debug.print("\n", .{});
     }
 }
 

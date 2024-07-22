@@ -1,6 +1,9 @@
+- Enemy is too fast
+    - It seems the enemy should be entities E, F and 0x10 since that's fits EN.STA. But it seems the positions are not at these entity offsets?
+
 - Add memory consumption
-- When the player turns left, the sprite doesn't change as it should
-- Missing movement of enemy
+X When the player turns left, the sprite doesn't change as it should
+X Missing movement of enemy
 - Score has trailing zeroes
 - Some of the entity_life_modes at the start of EN.GP are not correct. The modes toward
     the end of the array should be .Dead and not .Alive

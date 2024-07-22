@@ -1397,15 +1397,6 @@ fn move_entity(
     //@ 	 JSR EN.CYD
     //@ 	ENDIF
     game_state.entity_fine_position[entity] += game_state.entity_movement_delta;
-    toolbox.println(
-        "Fine position for {}: {}, Delta: {}, Pictures: {any}",
-        .{
-            entity,
-            game_state.entity_fine_position[entity],
-            game_state.entity_movement_delta,
-            game_state.entity_picture[entity],
-        },
-    );
     if (game_state.entity_movement_delta[0] >= 0) {
         if (game_state.entity_fine_position[entity][0] >= 0x14) {
             const square_height_index = out_square_height_index.* + PLAYFIELD_HEIGHT;
@@ -2497,7 +2488,11 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
 
                 //@ 	 JSR GP.TRC
                 //@ 	 STA EN.GP1(X)
-                game_state.general_purpose_1 = clamp_delta(delta_x);
+                game_state.general_purpose_1 = toolbox.clamp(
+                    delta_x,
+                    -game_state.crystal_monster_speed,
+                    game_state.crystal_monster_speed,
+                );
 
                 //@ ;  y coordinate
 
@@ -2526,7 +2521,11 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
                     0;
                 //@ 	 JSR GP.TRC
                 //@ 	 STA EN.GP2(X)
-                game_state.general_purpose_2 = clamp_delta(delta_y);
+                game_state.general_purpose_2 = toolbox.clamp(
+                    delta_y,
+                    -game_state.crystal_monster_speed,
+                    game_state.crystal_monster_speed,
+                );
             }
             //@ 	ENDIF
 
@@ -2662,9 +2661,6 @@ fn killer_algorithm(entity: usize, game_state: *GameState) void {
 
     //@ JMP 50$
     clamp_delta_entity_movement_delta(game_state);
-}
-fn clamp_delta(delta: isize) isize {
-    return toolbox.clamp(delta, -12, 12);
 }
 fn clamp_delta_entity_movement_delta(game_state: *GameState) void {
     //@ 50$:

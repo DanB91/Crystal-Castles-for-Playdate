@@ -153,9 +153,10 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
                     @intCast(mo.picture_number),
                 ).?;
                 const x: pdapi.Pixel = @intCast(mo.position[0] & 0xFF);
-                const y: pdapi.Pixel = @intCast(256 - 16 - (mo.position[1] & 0xFF));
+                const y: pdapi.Pixel = @intCast(256 - 16 - (mo.position[1] & 0xFF) - cc.Y_COORDINATE_OFFSET);
 
-                pdapi.draw_bitmap(tile, x, y - cc.Y_COORDINATE_OFFSET, .BitmapUnflipped);
+                pdapi.draw_bitmap(tile, x, y, .BitmapUnflipped);
+                // pdapi.draw_rect(x, y, 8, 16, pdapi.solid_color_to_color(.ColorBlack));
             }
         }
     }
