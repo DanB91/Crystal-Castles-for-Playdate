@@ -68,7 +68,7 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
                 StaticVars.platform_state.global_arena,
             );
             fiber.init(global_arena, 2, toolbox.kb(64));
-            fiber.go(&cc.update, .{StaticVars.platform_state.game_state});
+            fiber.go(cc.update, .{StaticVars.platform_state.game_state}, global_arena);
 
             pdapi.set_update_callback(update_and_render, &StaticVars.platform_state);
         },

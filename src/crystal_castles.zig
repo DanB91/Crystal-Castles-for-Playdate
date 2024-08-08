@@ -792,7 +792,7 @@ pub const GameState = struct {
 
     last_trackball_position: V2 = ZV2, //TR.I and TR.J
 
-    show_easter_egg: bool = false,
+    show_easter_egg_count: isize = 0,
 
     scoreboard: Scoreboard = .{},
 
@@ -2788,7 +2788,9 @@ fn entity_life_mode_calculation(entity: usize, game_state: *GameState) void {
             //@ 	 LDA EN.DEA(X)
             //@ 	 IFEQ
             if (game_state.entity_state[entity] == .Swarm and
-                (game_state.wave_time >= 0x600 or game_state.wave_time & 0xFF == 0 or game_state.entity_state[4] == .Honey) and
+                ((game_state.wave_time & 0xFF == 0 and
+                game_state.entity_state[4] == .Honey) or
+                (game_state.wave_time >= 0x600)) and
                 game_state.wave_time >= 0x100 and
                 !game_state.entity_end_of_wave_mode and
                 !game_state.entity_is_dead[entity])
@@ -2846,18 +2848,26 @@ fn entity_life_mode_calculation(entity: usize, game_state: *GameState) void {
             }
             //@ 	ELSE
             else {
-                //TODO
-                unreachable;
 
                 //@ 	 JSR EN.CCB
+                //clear collision
+                game_state.current_wave_data[
+                    game_state.entity_playfield_square_flags_index[entity]
+                ] &= 0b11110111;
                 //@ 	 LDA EN.Y(X)
                 //@ 	 CMP #0FF-24
                 //@ 	 IFCS
-                //@ 	  TRAI 3 EN.LMD(X)
+                if (u8gte(game_state.entity_position[entity][1], 0xFF - 0x24)) {
+                    //@ 	  TRAI 3 EN.LMD(X)
+                    game_state.entity_life_mode[entity] = .Dead;
+                }
                 //@ 	 ELSE			;  rise to top
-                //@ 	  ADD #4
-                //@ 	  STA EN.Y(X)
-                //@ 	 ENDIF
+                else {
+                    //@ 	  ADD #4
+                    //@ 	  STA EN.Y(X)
+                    game_state.entity_position[entity][1] += 4;
+                    //@ 	 ENDIF
+                }
 
                 //@ 	ENDIF
             }
@@ -3031,15 +3041,10 @@ fn erase_gem(entity: usize, game_state: *GameState) void {
     //@ 	RTS
 }
 
-//EN.PLU
+//@ ;---------------------------
+//@ ;  update player,  jump etc.
+//@ EN.PLU:
 fn update_player(game_state: *GameState) void {
-
-    //@ ;---------------------------
-    //@ ;  update player,  jump etc.
-    //@ EN.JTL:
-    //@ .BYTE 00,04,08,0B,0E,11,14,16,18,1A,1C,1D,1E,1F,1F,20
-    //@ .BYTE 20,20,1F,1F,1E,1D,1C,1A,18,16,14,11,0E,0B,08,04
-    //@ EN.PLU:
 
     //@ 	LDA EN.LMD	;  must be alive
     //@ 	IFNE
@@ -3107,35 +3112,48 @@ fn update_player(game_state: *GameState) void {
     //@ 	LDA EN.JFL
     //@ 	IFNE
     if (game_state.entity_jump_flag) {
-        //****TODO****
-        unreachable;
         //@ 	 DEC EN.JDL
+        game_state.entity_jump_delay -= 1;
         //@ 	 IFEQ			;  landing
-        //@ 	  LDA #2
-        //@ 	  STA EN.JDL
-        //@ 	  LDA #0
-        //@ 	  STA EN.JFL
-        //@ 	  LDA EN.MX
-        //@ 	  AND EN.MY
-        //@ 	  CMP #14
-        //@ 	  IFEQ
-        //@ 	   INC AT.OUT
-        //@ 	  ENDIF
-        //@ 	 ENDIF
+        if (game_state.entity_jump_delay == 0) {
+            //@ 	  LDA #2
+            //@ 	  STA EN.JDL
+            game_state.entity_jump_delay = 2;
+            //@ 	  LDA #0
+            //@ 	  STA EN.JFL
+            game_state.entity_jump_flag = false;
+            //@ 	  LDA EN.MX
+            //@ 	  AND EN.MY
+            //@ 	  CMP #14
+            //@ 	  IFEQ
+            if (@reduce(.And, game_state.entity_playfield_position[PLAYER_ENTITY]) == 0x14) {
+                //@ 	   INC AT.OUT
+                game_state.show_easter_egg_count += 1;
+                //@ 	  ENDIF
+            }
+            //@ 	 ENDIF
+        }
         //@ 	ENDIF
     }
 
     //@ 	LDA EN.JFL
     //@ 	IFNE
     if (game_state.entity_jump_flag) {
-        //****TODO****
-        unreachable;
+        //@ EN.JTL:
+        const JUMP_OFFSETS = [_]isize{
+            0x0,  0x4,  0x8,  0xB,  0xE,  0x11, 0x14, 0x16, 0x18, 0x1A, 0x1C, 0x1D, 0x1E, 0x1F, 0x1F, 0x20,
+            0x20, 0x20, 0x1F, 0x1F, 0x1E, 0x1D, 0x1C, 0x1A, 0x18, 0x16, 0x14, 0x11, 0xE,  0xB,  0x8,  0x4,
+        };
         //@ 	 LDA EN.JDL
         //@ 	 TAY
         //@ 	 LDA EN.JTL(Y)
         //@ 	 STA EN.HOF
-        //@ 	ELSE
+        game_state.entity_hof[PLAYER_ENTITY] = JUMP_OFFSETS[@intCast(game_state.entity_jump_delay)];
+    }
+    //@ 	ELSE
+    else {
         //@ 	 TRAI 0 EN.HOF
+        game_state.entity_hof[PLAYER_ENTITY] = 0;
         //@ 	ENDIF
     }
 
@@ -3817,7 +3835,7 @@ fn init_entities(game_state: *GameState) void {
         //@	TRAI 0 EN.DEA(X)	;  everybody is alive
         game_state.entity_is_dead[entity] = false;
         //@	STA AT.OUT
-        game_state.show_easter_egg = false;
+        game_state.show_easter_egg_count = 0;
 
         //@	TXA
         //@	IFEQ
@@ -5795,7 +5813,7 @@ fn draw_2_digit_number(
 }
 //@AL.DGO:
 fn draw_digit(
-    digit: u8,
+    digit: isize,
     position: *V2,
     suppress_zero: *bool,
     pixels_left_to_erase: *isize,
@@ -5834,7 +5852,7 @@ fn draw_digit(
     //@	TRAI CL.ALP AL.COL
     //@	JSR AL.DRW
     add_draw_character_command(
-        (digit % 10) + '0',
+        @intCast(@mod(digit, 10) + '0'),
         color,
         position.*,
         game_state,
@@ -5892,21 +5910,22 @@ fn draw_6_digit_number(
     //@	LSRS 4
     //@	STA SC.DIG
     //@	JSR AL.DGO
-    var n = number;
     var position = start_position;
+    var divisor: isize = 100000;
     for (0..5) |_| {
+        const digit = @mod(@divTrunc(number, divisor), 10);
         draw_digit(
-            @intCast(@mod(n, 10)),
+            digit,
             &position,
             &suppress_zero,
             &pixels_left_to_erase,
             game_state,
         );
-        n = @divTrunc(n, 10);
+        divisor = @divTrunc(divisor, 10);
     }
     suppress_zero = false;
     draw_digit(
-        @intCast(@mod(n, 10)),
+        @mod(number, 10),
         &position,
         &suppress_zero,
         &pixels_left_to_erase,
