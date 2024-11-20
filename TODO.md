@@ -1,3 +1,4 @@
+
 - Swarm erroneously spawns in attract mode
 - Add memory consumption
 - Some of the entity_life_modes at the start of EN.GP are not correct. The modes toward

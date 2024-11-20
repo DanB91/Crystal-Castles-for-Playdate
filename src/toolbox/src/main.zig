@@ -3,16 +3,20 @@ const toolbox = @import("toolbox.zig");
 const profiler = toolbox.profiler;
 const fiber = toolbox.fiber;
 
-pub const THIS_PLATFORM = toolbox.Platform.MacOS;
 pub const ENABLE_PROFILER = true; // !toolbox.IS_DEBUG;
 pub const panic = toolbox.panic_handler;
 
 pub fn main() anyerror!void {
+    //TODO: test arena up here
+    var arena = toolbox.Arena.init(toolbox.mb(1));
+    defer arena.free_all();
+
+    //TODO: uncomment after solving removal bug
     if (toolbox.IS_DEBUG) {
-        try run_tests();
+        try run_tests(arena);
         // run_benchmarks();
     } else {
-        try run_tests();
+        try run_tests(arena);
         run_benchmarks();
     }
 }
@@ -26,7 +30,7 @@ pub fn main() anyerror!void {
 //All,
 //};
 
-fn run_tests() !void {
+fn run_tests(arena: *toolbox.Arena) !void {
 
     //print tests
     {
@@ -71,17 +75,17 @@ fn run_tests() !void {
         }
 
         const arena_size = toolbox.mb(1);
-        var arena = toolbox.Arena.init(arena_size);
+        var test_arena = toolbox.Arena.init(arena_size);
         //test init arena
         {
-            toolbox.expecteq(0, arena.pos, "Arena should have initial postion of 0");
-            toolbox.expecteq(arena_size - @sizeOf(toolbox.Arena) - @sizeOf(std.mem.Allocator.VTable), arena.data.len, "Wrong arena capacity");
+            toolbox.expecteq(0, test_arena.pos, "Arena should have initial postion of 0");
+            toolbox.expecteq(arena_size - @sizeOf(toolbox.Arena) - @sizeOf(std.mem.Allocator.VTable), test_arena.data.len, "Wrong arena capacity");
         }
 
         //test push_bytes_unaligned
         const num_bytes = toolbox.kb(4);
         {
-            const bytes = arena.push_bytes_unaligned(num_bytes);
+            const bytes = test_arena.push_bytes_unaligned(num_bytes);
             toolbox.expecteq(num_bytes, bytes.len, "Wrong number of bytes allocated");
 
             for (bytes) |*b| b.* = 0xFF;
@@ -89,29 +93,40 @@ fn run_tests() !void {
         //test push_slice
         const num_longs = 1024;
         {
-            const longs = arena.push_slice(u64, num_longs);
+            const longs = test_arena.push_slice(u64, num_longs);
             toolbox.expecteq(num_longs, longs.len, "Wrong number of longs");
 
             for (longs) |*b| b.* = 0xFFFF_FFFF_FFFF_FFFF;
         }
         //test total_bytes_used and reset
         {
-            toolbox.expecteq(num_longs * 8 + num_bytes, arena.total_bytes_used(), "Wrong number of bytes used");
-            arena.reset();
-            toolbox.expecteq(0, arena.total_bytes_used(), "Arena should be reset");
+            toolbox.expecteq(num_longs * 8 + num_bytes, test_arena.total_bytes_used(), "Wrong number of bytes used");
+            test_arena.reset();
+            toolbox.expecteq(0, test_arena.total_bytes_used(), "Arena should be reset");
+        }
+        //test push_bytes_z
+        {
+            const TEST_LEN = 20;
+            const bytes_z = test_arena.push_bytes_z(TEST_LEN);
+            @memset(bytes_z, 0xAA);
+            const cstring = @cImport(@cInclude("string.h"));
+            const len = cstring.strlen(bytes_z.ptr);
+            toolbox.expecteq(TEST_LEN, bytes_z.len, "Unexpected len for push_bytes_z");
+            toolbox.expecteq(TEST_LEN, len, "Unexpected strlen result for push_bytes_z");
+            test_arena.reset();
         }
         //test save points
         {
-            const longs = arena.push_slice(u64, num_longs);
-            toolbox.expecteq(num_longs * 8, arena.total_bytes_used(), "Wrong number of bytes used");
+            const longs = test_arena.push_slice(u64, num_longs);
+            toolbox.expecteq(num_longs * 8, test_arena.total_bytes_used(), "Wrong number of bytes used");
             toolbox.expecteq(num_longs, longs.len, "Wrong number of longs");
-            const save_point = arena.create_save_point();
+            const save_point = test_arena.create_save_point();
             defer {
-                arena.restore_save_point(save_point);
-                toolbox.expecteq(num_longs * 8, arena.total_bytes_used(), "Wrong number of bytes used after restoring save point");
+                test_arena.restore_save_point(save_point);
+                toolbox.expecteq(num_longs * 8, test_arena.total_bytes_used(), "Wrong number of bytes used after restoring save point");
             }
-            const longs2 = arena.push_slice(u64, num_longs);
-            toolbox.expecteq(num_longs * 8 * 2, arena.total_bytes_used(), "Wrong number of bytes used");
+            const longs2 = test_arena.push_slice(u64, num_longs);
+            toolbox.expecteq(num_longs * 8 * 2, test_arena.total_bytes_used(), "Wrong number of bytes used");
             toolbox.expecteq(num_longs, longs2.len, "Wrong number of longs used");
         }
         //test scratch arena
@@ -179,7 +194,7 @@ fn run_tests() !void {
         //pool allocator
         {
             const POOL_SIZE = 8;
-            var pool_allocator = toolbox.PoolAllocator(i32).init(POOL_SIZE, arena);
+            var pool_allocator = toolbox.PoolAllocator(i32).init(POOL_SIZE, test_arena);
             var ptrs: [POOL_SIZE * 2]*i32 = undefined;
             {
                 var i: usize = 0;
@@ -198,11 +213,8 @@ fn run_tests() !void {
             }
         }
 
-        arena.free_all();
+        test_arena.free_all();
     }
-
-    var arena = toolbox.Arena.init(toolbox.mb(1));
-    defer arena.free_all();
 
     //Random removal Linked list
     {
@@ -283,6 +295,23 @@ fn run_tests() !void {
                 }
             }
         }
+
+        //removing nodes...
+        {
+            toolbox.expect(list.tail == third_element, "List tail is wrong", .{});
+            list.remove(third_element, &free_list);
+            toolbox.expect(list.len == 2, "List should be length 2", .{});
+            toolbox.expect(list.tail == first_element, "List tail is wrong", .{});
+            toolbox.expect(list.head == zeroth_element, "List head is wrong", .{});
+            list.remove(zeroth_element, &free_list);
+            toolbox.expect(list.tail == first_element, "List tail is wrong", .{});
+            toolbox.expect(list.head == first_element, "List head is wrong", .{});
+            toolbox.expect(list.len == 1, "List should be length 1", .{});
+            list.remove(first_element, &free_list);
+            toolbox.expect(list.len == 0, "List should be length 1", .{});
+            toolbox.expect(list.head == null, "List head should be null", .{});
+            toolbox.expect(list.tail == null, "List tail should be null", .{});
+        }
     }
 
     //Hash map
@@ -328,13 +357,29 @@ fn run_tests() !void {
         data = map.get("8yn0iYCKYHlIj4-BwPqk");
         toolbox.expecteq(234, data.?, "Hash map retrieval is wrong!");
 
-        map.remove("GReLUrM4wMqfg9yzV3KQ");
+        //NOTE Apple IIs, GReLUrM4wMqfg9yzV3KQ, and  8yn0iYCKYHlIj4-BwPqk  collide in this example
+        map.remove("Apple IIs");
         toolbox.expecteq(3, map.len, "Hash map len is wrong!");
+        data = map.get("GReLUrM4wMqfg9yzV3KQ");
+        toolbox.expecteq(654, data.?, "Hash map retrieval is wrong!");
+        data = map.get("8yn0iYCKYHlIj4-BwPqk");
+        toolbox.expecteq(234, data.?, "Hash map retrieval is wrong!");
+
+        //TODO: fix this crap!!
+        map.remove("GReLUrM4wMqfg9yzV3KQ");
+        toolbox.expecteq(2, map.len, "Hash map len is wrong!");
         data = map.get("GReLUrM4wMqfg9yzV3KQ");
         toolbox.expecteq(null, data, "Hash map retrieval is wrong!");
         data = map.get("8yn0iYCKYHlIj4-BwPqk");
         toolbox.expecteq(234, data.?, "Hash map retrieval is wrong!");
+
+        map.remove("8yn0iYCKYHlIj4-BwPqk");
+        toolbox.expecteq(1, map.len, "Hash map len is wrong!");
+        data = map.get("8yn0iYCKYHlIj4-BwPqk");
+        toolbox.expecteq(null, data, "Hash map retrieval is wrong!");
     }
+
+    boksos_collision_removal_bug(arena);
 
     //numerial hashmap
     {
@@ -383,12 +428,12 @@ fn run_tests() !void {
         const korean = toolbox.str8lit("안녕하세요!");
         const japanese = toolbox.str8lit("こんにちは!");
 
-        const buffer = [_]u8{ 'H', 'e', 'l', 'l', 'o', '!' };
+        const buffer = [_:0]u8{ 'H', 'e', 'l', 'l', 'o', '!', 0 };
         const runtime_english = toolbox.str8(buffer[0..]);
-        toolbox.expecteq(6, english.rune_length, "Wrong rune length");
-        toolbox.expecteq(6, runtime_english.rune_length, "Wrong rune length");
-        toolbox.expecteq(6, korean.rune_length, "Wrong rune length");
-        toolbox.expecteq(6, japanese.rune_length, "Wrong rune length");
+        toolbox.expecteq(6, english.rune_length(), "Wrong rune length");
+        toolbox.expecteq(6, runtime_english.rune_length(), "Wrong rune length");
+        toolbox.expecteq(6, korean.rune_length(), "Wrong rune length");
+        toolbox.expecteq(6, japanese.rune_length(), "Wrong rune length");
 
         {
             var it = japanese.iterator();
@@ -412,8 +457,8 @@ fn run_tests() !void {
         //substring
         {
             const s = toolbox.str8lit("hello!");
-            const ss = s.substring(1, 3);
-            toolbox.expecteq(2, ss.rune_length, "Wrong rune length");
+            const ss = s.substring(1, 3, arena);
+            toolbox.expecteq(2, ss.rune_length(), "Wrong rune length");
             toolbox.expecteq(2, ss.bytes.len, "Wrong byte length");
             toolbox.expecteq(ss.bytes[0], 'e', "Wrong char at index 0");
             toolbox.expecteq(ss.bytes[1], 'l', "Wrong char at index 1");
@@ -430,6 +475,23 @@ fn run_tests() !void {
             toolbox.expecteq(s.contains(not_substring1), false, "Should not contain");
             toolbox.expecteq(s.contains(not_substring2), false, "Should not contain");
         }
+
+        //copy
+        {
+            defer arena.reset();
+            const s = toolbox.str8lit("hello!");
+            const copy = s.copy(arena);
+            toolbox.expect(
+                copy.bytes.ptr != s.bytes.ptr,
+                "String copy and string ptrs should not be the same!",
+                .{},
+            );
+            toolbox.expect(
+                std.mem.eql(u8, copy.bytes, s.bytes),
+                "String copy and string should be the same!",
+                .{},
+            );
+        }
     }
     //string builder
     {
@@ -437,7 +499,7 @@ fn run_tests() !void {
         var sb = toolbox.StringBuilder{};
         sb.append_fmt("Hello! {}\n", .{123}, arena);
         sb.append_fmt("こんにちは!! {}", .{123}, arena);
-        const str = sb.str8();
+        const str = sb.str8(arena);
         const expected = toolbox.str8lit("Hello! 123\nこんにちは!! 123");
 
         toolbox.expect(
@@ -446,14 +508,15 @@ fn run_tests() !void {
             .{},
         );
         toolbox.expecteq(
-            str.rune_length,
-            expected.rune_length,
+            str.rune_length(),
+            expected.rune_length(),
             "String builder rune lengths incorrect!",
         );
     }
     //stack
     //TODO
     {}
+    //TODO: replace with channel
     //ring queue
     {
         defer arena.reset();
@@ -481,7 +544,7 @@ fn run_tests() !void {
             const i = @as(i64, @intCast(u));
             ring_queue.force_enqueue(i);
         }
-        var expected: i64 = 2;
+        var expected: i64 = 3;
         while (ring_queue.dequeue()) |got| {
             toolbox.expect(
                 expected == got,
@@ -493,7 +556,7 @@ fn run_tests() !void {
     }
     //MultiProducerMultiConsumerRingQueue multi thread test
     //TODO: remove for now
-    if (false) {
+    {
         defer arena.reset();
 
         const TestData = struct {
@@ -535,17 +598,6 @@ fn run_tests() !void {
         for (consumers) |c| {
             c.join();
         }
-        toolbox.expect(
-            ring_queue.used == 0,
-            "Expected no used ring queue entries.  Was: {}",
-            .{ring_queue.used},
-        );
-        toolbox.expect(
-            ring_queue.free == ring_queue.data.len,
-            "Expected all ring queue entries to be free.  Was: {}",
-            .{ring_queue.free},
-        );
-
         for (max_value_dequeued, 0..) |n, i| {
             toolbox.expect(
                 n == MAX_VALUE_DEQUEUED,
@@ -554,16 +606,52 @@ fn run_tests() !void {
             );
         }
     }
-    //dynamic array
+    //dynamic array number
     {
         var da = toolbox.DynamicArray(i64){};
-        da.append(1, arena);
-        da.append(2, arena);
         da.append(3, arena);
+        da.append(2, arena);
+        da.append(1, arena);
         da.append(4, arena);
         toolbox.assert(da.len == 4, "Unexpected dynamic array length: {}", .{da.len});
         toolbox.assert(da.cap == toolbox.DYNAMIC_ARRAY_INITIAL_CAPACITY, "Unexpected dynamic array capacity: {}", .{da.len});
         toolbox.println("Dynamic array print: {}", .{da});
+        for (da.items(), [_]i64{ 3, 2, 1, 4 }) |actual, expected| {
+            toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
+        }
+        da.sort();
+        for (da.items(), [_]i64{ 1, 2, 3, 4 }) |actual, expected| {
+            toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
+        }
+    }
+    //dynamic array pointer to struct
+    {
+        const TestStruct = struct {
+            num: i64,
+        };
+        var da = toolbox.DynamicArray(*TestStruct){};
+        var val = arena.push(TestStruct);
+        val.num = 3;
+        da.append(val, arena);
+        val = arena.push(TestStruct);
+        val.num = 2;
+        da.append(val, arena);
+        val = arena.push(TestStruct);
+        val.num = 1;
+        da.append(val, arena);
+        val = arena.push(TestStruct);
+        val.num = 4;
+        da.append(val, arena);
+        toolbox.assert(da.len == 4, "Unexpected dynamic array length: {}", .{da.len});
+        toolbox.assert(da.cap == toolbox.DYNAMIC_ARRAY_INITIAL_CAPACITY, "Unexpected dynamic array capacity: {}", .{da.len});
+        toolbox.println("Dynamic array print: {}", .{da});
+        for (da.items(), [_]i64{ 3, 2, 1, 4 }) |actual, expected| {
+            toolbox.expecteq(expected, actual.num, "Incorrect value from dynamic array");
+        }
+        da.sort("num");
+        for (da.items(), [_]i64{ 1, 2, 3, 4 }) |actual, expected| {
+            toolbox.expecteq(expected, actual.num, "Incorrect value from dynamic array");
+        }
     }
     //fibers
     {
@@ -571,7 +659,7 @@ fn run_tests() !void {
             fn fiber_test(til: *usize) void {
                 for (1..til.*) |i| {
                     toolbox.println("Fiber output {}", .{i});
-                    _ = fiber.yield();
+                    fiber.yield();
                 }
             }
         };
@@ -664,6 +752,33 @@ fn run_tests() !void {
     }
     toolbox.println("\nAll tests passed!", .{});
 }
+
+//Collision removal bug found in BoksOS
+fn boksos_collision_removal_bug(arena: *toolbox.Arena) void {
+    defer arena.reset();
+    var map = toolbox.HashMap(u16, u16){};
+    const n = 128;
+    for (0..n) |i| {
+        const kv: u16 = @intCast(i);
+        map.put(kv, kv, arena);
+        toolbox.expect(map.get(kv) != null, "Key {} should be in map!", .{kv});
+        toolbox.expecteq(kv, map.get(kv), "Map value incorrect!");
+        toolbox.expecteq(i + 1, map.len, "Map len incorrect!");
+    }
+    for (0..n) |i| {
+        const outer_kv: u16 = @intCast(i);
+        map.remove(outer_kv);
+        //TODO: fix
+        toolbox.expecteq(n - i - 1, map.len, "Map len incorrect!");
+        toolbox.expecteq(null, map.get(outer_kv), "Map key should be removed!");
+        for (i + 1..n) |j| {
+            const inner_kv: u16 = @intCast(j);
+            //Bug found in NVMe map in BoksOS
+            //TODO: fix
+            toolbox.expecteq(inner_kv, map.get(inner_kv), "Map value incorrect!");
+        }
+    }
+}
 fn profiler_fn1(n: isize) void {
     profiler.begin("Fn1");
     defer profiler.end();
@@ -715,25 +830,30 @@ fn concurrent_queue_dequeue_test_loop(
 ) void {
     var last_actual = [_]i64{-1} ** num_producers;
 
-    while (@atomicLoad(isize, producers_running, .monotonic) > 0) {
+    var data_left = true;
+    while (@atomicLoad(isize, producers_running, .monotonic) > 0 or
+        data_left)
+    {
         if (ring_queue.dequeue()) |test_data| {
+            data_left = true;
             const thread_id: usize = test_data.thread_id;
             const actual = test_data.n;
 
             toolbox.expect(
                 actual > last_actual[thread_id],
                 \\Unexpected ring queue value.  Expected greater than: {}, Was: {}, Thread: {}
-                \\used: {}, free: {}, rcursor: {}, wcursor: {}, reserved_rcursor: {}, reserved_wcursor: {} 
+                \\ rcursor: {}, wcursor: {} 
             ,
                 .{
-                    last_actual[thread_id] & 0xFFFF_FFFF, actual & 0xFFFF_FFFF,        thread_id,
-                    ring_queue.used,                      ring_queue.free,             ring_queue.rcursor,
-                    ring_queue.wcursor,                   ring_queue.reserved_rcursor, ring_queue.reserved_wcursor,
+                    last_actual[thread_id] & 0xFFFF_FFFF, actual & 0xFFFF_FFFF, thread_id,
+                    ring_queue.rcursor,                   ring_queue.wcursor,
                 },
             );
             last_actual[thread_id] = actual;
             _ = @atomicRmw(i64, &max_value_dequeued[thread_id], .Max, actual, .acq_rel);
         } else {
+            data_left = false;
+
             std.atomic.spinLoopHint();
         }
     }

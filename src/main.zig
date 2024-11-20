@@ -174,9 +174,9 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     }
 
     profiler.end_profiler();
-    if (pdapi.is_button_down(pdapi.BUTTON_B)) {
-        draw_debug_and_profiler_hud(platform_state, command_count);
-    }
+    // if (pdapi.is_button_down(pdapi.BUTTON_B)) {
+    draw_debug_and_profiler_hud(platform_state, command_count);
+    // }
     //draw fps
     {
         pdapi.draw_fps(pdapi.LCD_COLUMNS - 20, 0);
@@ -283,6 +283,20 @@ fn draw_debug_and_profiler_hud(
         F.add_line(
             "fine x: {X}, fine y: {X}",
             .{ game_state.entity_fine_position[0][0], game_state.entity_fine_position[0][1] },
+            &lines,
+            &background_width,
+            arena,
+        );
+        F.add_line(
+            "dx: {X}, dy: {X}",
+            .{ game_state.entity_movement_delta[0], game_state.entity_movement_delta[1] },
+            &lines,
+            &background_width,
+            arena,
+        );
+        F.add_line(
+            "time: {X}, attract index: {}",
+            .{ game_state.wave_time, game_state.attract_mode_player_position_index },
             &lines,
             &background_width,
             arena,
@@ -452,21 +466,21 @@ fn draw_character(
     color: cc.Color,
     castle_bitmap_data: pdapi.BitmapData,
 ) void {
-    //	TRAI 000 HW.AY	; y auto dec
-    // 	TRAI 0FF HW.YIN
+    //    TRAI 000 HW.AY    ; y auto dec
+    //     TRAI 0FF HW.YIN
 
-    // 	TRAM AL.X XB
-    // 	LDY AL.DIG
-    // 	CPY #4A
-    // 	IFMI
-    // 	 TR16AI AL.55D AL.PTR
-    // 	 TYA
-    // 	 SUB #40
-    // 	ELSE
-    // 	 TR16AI AL.55L AL.PTR
-    // 	 TYA
-    // 	 SUB #4A
-    // 	ENDIF
+    //     TRAM AL.X XB
+    //     LDY AL.DIG
+    //     CPY #4A
+    //     IFMI
+    //      TR16AI AL.55D AL.PTR
+    //      TYA
+    //      SUB #40
+    //     ELSE
+    //      TR16AI AL.55L AL.PTR
+    //      TYA
+    //      SUB #4A
+    //     ENDIF
 
     var bitmap_index_start: usize = 0;
     var bitmap_set: []const u8 = undefined;
@@ -482,34 +496,34 @@ fn draw_character(
         else => toolbox.panic("Trying to draw nvalid character: {X}", .{char}),
     }
 
-    // 	JSR AL.5OT
+    //     JSR AL.5OT
 
     // AL.5OT:
     {
         var position_cursor = position;
-        // 	STA TEMP1	;  mult by 5 so (A) points to sym
-        // 	ASLS 2
-        // 	ADD TEMP1
-        // 	STA TEMP1
+        //     STA TEMP1    ;  mult by 5 so (A) points to sym
+        //     ASLS 2
+        //     ADD TEMP1
+        //     STA TEMP1
 
-        // 	TRAI 5 AL.TMP
-        // 	LDX AL.COL
+        //     TRAI 5 AL.TMP
+        //     LDX AL.COL
         // 10$:
         var i: usize = 0;
         for (0..cc.CHARACTER_BITMAP_WIDTH) |x| {
-            // 	LDY TEMP1
-            // 	TRAM AL.Y YB
+            //     LDY TEMP1
+            //     TRAM AL.Y YB
             position_cursor[1] = position[1];
             const bitmap_index = bitmap_index_start + x;
-            // 	LDA @AL.PTR(Y)
+            //     LDA @AL.PTR(Y)
             var character_row = bitmap_set[bitmap_index];
-            // 	LDY #0F
-            // 	.REPT 5
+            //     LDY #0F
+            //     .REPT 5
             for (0..cc.CHARACTER_BITMAP_HEIGHT) |_| {
-                // 	ASL
-                // 	IFCS
+                //     ASL
+                //     IFCS
                 if (character_row & 0x80 != 0) {
-                    // 	STX VB
+                    //     STX VB
                     const is_white_pixel = switch (color) {
                         .White => true,
                         .Black => false,
@@ -523,29 +537,29 @@ fn draw_character(
                         castle_bitmap_data,
                     );
                     i += 1;
-                    // 	ENDIF
+                    //     ENDIF
                 }
                 //NOTE: this code just causes auto increment
-                // 	IFCC
-                // 	LDY VB
-                //  	ENDIF
+                //     IFCC
+                //     LDY VB
+                //      ENDIF
 
-                // ;	DEC YB
+                // ;    DEC YB
                 position_cursor -= .{ 0, 1 };
-                // 	.ENDM
+                //     .ENDM
 
                 character_row <<= 1;
             }
 
-            // 	INC XB
+            //     INC XB
             position_cursor += .{ 1, 0 };
-            // 	INC TEMP1
-            // 	DEC AL.TMP
-            // 	BNE 10$
+            //     INC TEMP1
+            //     DEC AL.TMP
+            //     BNE 10$
         }
     }
     // 8$:
-    // 	TRAI 0FF HW.AY	; auto dec off
+    //     TRAI 0FF HW.AY    ; auto dec off
 }
 
 fn screen_erase(
@@ -555,28 +569,28 @@ fn screen_erase(
 ) void {
     //  STA TEMP1
     var column_cursor = number_of_pixel_columns_to_erase;
-    // 	LDA AL.X
-    // 	STA XB
-    // 	LDA AL.Y
-    // 	STA YB
-    // 	INC YB
+    //     LDA AL.X
+    //     STA XB
+    //     LDA AL.Y
+    //     STA YB
+    //     INC YB
     var position = start_position + cc.V2{ 0, 1 };
 
-    // 	TRAI 000 HW.AY	; auto dec y
-    // 	TRAI 0FF HW.YIN
+    //     TRAI 000 HW.AY    ; auto dec y
+    //     TRAI 0FF HW.YIN
 
-    // 	LDA #00F
-    // 	INC TEMP1
+    //     LDA #00F
+    //     INC TEMP1
     // 10$:
-    // 	DEC TEMP1
-    // 	BEQ 20$
+    //     DEC TEMP1
+    //     BEQ 20$
     while (column_cursor > 0) {
-        // 	STA VB
-        // 	.REPT 7
+        //     STA VB
+        //     .REPT 7
         for (0..8) |_| {
-            // ;	DEC YB
-            // 	STA VB
-            // 	.ENDM
+            // ;    DEC YB
+            //     STA VB
+            //     .ENDM
 
             //NOTE: screen erase is always black
             draw_pixel(
@@ -587,18 +601,18 @@ fn screen_erase(
 
             position[1] -= 1;
         }
-        // 	INC XB
+        //     INC XB
         position[0] += 1;
-        // 	LDY AL.Y
-        // 	STY YB
-        // 	INC YB
+        //     LDY AL.Y
+        //     STY YB
+        //     INC YB
         position[1] = start_position[1] + 1;
 
         column_cursor -= 1;
-        // 	JMP 10$
+        //     JMP 10$
     }
     // 20$:
-    // 	TRAI 0FF HW.AY
+    //     TRAI 0FF HW.AY
 }
 
 inline fn draw_pixel(

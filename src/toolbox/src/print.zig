@@ -27,7 +27,7 @@ pub fn panic(comptime fmt: []const u8, args: anytype) noreturn {
 fn platform_print_to_console(comptime fmt: []const u8, args: anytype, comptime is_err: bool, comptime include_newline: bool) void {
     const nl = if (include_newline) "\n" else "";
     switch (comptime toolbox.THIS_PLATFORM) {
-        .WASM, .MacOS => {
+        .WASM, .MacOS, .Linux => {
             var buffer = [_]u8{0} ** 2048;
             //TODO dynamically allocate buffer for printing.  use std.fmt.count to count the size
 
@@ -52,7 +52,8 @@ fn platform_print_to_console(comptime fmt: []const u8, args: anytype, comptime i
                 };
             toolbox.playdate_log_to_console("%s", to_print.ptr);
         },
-        .Wozmon64, .UEFI => {
+        .Wozmon64, .UEFI, .BoksOS => {
+            //TODO support BoksOS unified console
             var buffer = [_]u8{0} ** 2048;
             //TODO dynamically allocate buffer for printing.  use std.fmt.count to count the size
 
@@ -71,9 +72,8 @@ fn platform_print_to_console(comptime fmt: []const u8, args: anytype, comptime i
                 );
             }
         },
-        else => @compileError("Unsupported platform"),
+        else => @compileError("TODO"),
     }
-    //TODO support BoksOS
     //TODO think about stderr
     //TODO won't work on windows
 }

@@ -62,6 +62,7 @@ pub fn build(b: *std.Build) !void {
     elf.root_module.addImport("toolbox", toolbox_module);
     elf.root_module.addImport("build_info", build_info_module);
     elf.root_module.addImport("levels.bin", levels_data_module);
+    elf.root_module.single_threaded = true;
 
     _ = writer.addCopyFile(elf.getEmittedBin(), "pdex.elf");
 

@@ -12,7 +12,6 @@ pub fn HashMap(comptime Key: type, comptime Value: type) type {
         hash_collisions: usize = 0,
         index_collisions: usize = 0,
         reprobe_collisions: usize = 0,
-        bad_reprobe_collisions: usize = 0,
 
         pub const KeyValue = struct {
             k: Key,
@@ -26,6 +25,7 @@ pub fn HashMap(comptime Key: type, comptime Value: type) type {
             pub fn next(self: *Iterator) ?KeyValue {
                 while (self.cursor < self.hash_map.keys.len) : (self.cursor += 1) {
                     if (self.hash_map.keys.items()[self.cursor]) |key| {
+                        defer self.cursor += 1;
                         return .{
                             .k = key,
                             .v = self.hash_map.values.items()[self.cursor],
@@ -140,13 +140,8 @@ pub fn HashMap(comptime Key: type, comptime Value: type) type {
                 return;
             }
 
-            const key_bytes = if (comptime toolbox.is_string_type(Key))
-                to_bytes(key)
-            else
-                to_bytes(&key);
-            const h = hash_fnv1a64(key_bytes);
+            var index = self.hash_index(key);
 
-            var index: usize = @intCast(h & (self.keys.len - 1));
             var key_ptr = &self.keys.items()[index];
             var did_delete = false;
             if (key_ptr.*) |bucket_key| {
@@ -159,45 +154,30 @@ pub fn HashMap(comptime Key: type, comptime Value: type) type {
             }
             self.len -= 1;
 
-            const dest = index;
+            var dest = index;
 
             //now move collisions "up"
 
             //re-probe
-            {
-                const index_bit_size: u6 = @intCast(@ctz(self.keys.len));
-                var i = index_bit_size;
-                while (i < @bitSizeOf(usize)) : (i += index_bit_size) {
-                    index = @intCast((h >> i) & (self.keys.len - 1));
-                    key_ptr = &self.keys.items()[index];
-                    if (key_ptr.*) |bucket_key| {
-                        if (did_delete) {
-                            self.keys.items()[dest] = bucket_key;
-                            self.values.items()[dest] = self.values.items()[index];
-                            key_ptr.* = null;
-                        } else if (eql(bucket_key, key)) {
-                            key_ptr.* = null;
-                            did_delete = true;
-                        }
-                    } else {
-                        return;
-                    }
-                }
-            }
 
-            //last ditch effort
             {
                 const end = index;
-                index += 1;
+                index = (index + 1) & (self.keys.len - 1);
                 while (index != end) : (index = (index + 1) & (self.keys.len - 1)) {
                     key_ptr = &self.keys.items()[index];
                     if (key_ptr.*) |bucket_key| {
                         if (did_delete) {
+                            const bucket_index = self.hash_index(bucket_key);
+                            if (bucket_index == index) {
+                                return;
+                            }
                             self.keys.items()[dest] = bucket_key;
                             self.values.items()[dest] = self.values.items()[index];
                             key_ptr.* = null;
+                            //TODO: new addition. check if this makes sense
+                            dest = index;
                         } else if (eql(bucket_key, key)) {
-                            key.* = null;
+                            key_ptr.* = null;
                             did_delete = true;
                         }
                     } else {
@@ -258,16 +238,22 @@ pub fn HashMap(comptime Key: type, comptime Value: type) type {
                 .hash_map = self,
             };
         }
-
-        fn index_for_key(self: *Self, key: Key) usize {
+        fn hash_index(self: *Self, key: Key) usize {
             const key_bytes = if (comptime toolbox.is_string_type(Key))
-                to_bytes(key)
+                toolbox.to_const_bytes(key)
             else
-                to_bytes(&key);
+                toolbox.to_const_bytes(&key);
             const h = hash_fnv1a64(key_bytes);
 
-            var index: usize = @intCast(h & (self.keys.len - 1));
+            const result: usize = @intCast(h & (self.keys.len - 1));
+            return result;
+        }
+
+        fn index_for_key(self: *Self, key: Key) usize {
+            var index = self.hash_index(key);
+
             var key_ptr = &self.keys.items()[index];
+
             if (key_ptr.*) |bucket_key| {
                 if (eql(bucket_key, key)) {
                     return index;
@@ -279,28 +265,10 @@ pub fn HashMap(comptime Key: type, comptime Value: type) type {
             self.index_collisions += 1;
             //re-probe
             {
-                const index_bit_size = @ctz(self.keys.len);
-                var i: usize = index_bit_size;
-                while (i < @bitSizeOf(usize)) : (i += index_bit_size) {
-                    self.reprobe_collisions += 1;
-                    index = @intCast((h >> @intCast(i)) & (self.keys.len - 1));
-                    key_ptr = &self.keys.items()[index];
-                    if (key_ptr.*) |bucket_key| {
-                        if (eql(bucket_key, key)) {
-                            return index;
-                        }
-                    } else {
-                        return index;
-                    }
-                }
-            }
-
-            //last ditch effort
-            {
                 const end = index;
-                index += 1;
+                index = (index + 1) & (self.keys.len - 1);
                 while (index != end) : (index = (index + 1) & (self.keys.len - 1)) {
-                    self.bad_reprobe_collisions += 1;
+                    self.reprobe_collisions += 1;
                     key_ptr = &self.keys.items()[index];
                     if (key_ptr.*) |bucket_key| {
                         if (eql(bucket_key, key)) {
@@ -324,33 +292,6 @@ pub fn hash_fnv1a64(data: []const u8) u64 {
     return h;
 }
 
-fn to_bytes(v: anytype) []const u8 {
-    const T = @TypeOf(v);
-    if (comptime T == []const u8) {
-        return v;
-    }
-    if (comptime T == toolbox.String8) {
-        return v.bytes;
-    }
-    const ti = @typeInfo(T);
-    switch (comptime ti) {
-        .Pointer => |info| {
-            const Child = info.child;
-            switch (comptime info.size) {
-                .Slice => {
-                    return @as([*]const u8, @ptrCast(v.ptr))[0..@sizeOf(Child)];
-                },
-                else => {
-                    return @as([*]const u8, @ptrCast(v))[0..@sizeOf(Child)];
-                },
-            }
-        },
-        else => {
-            @compileError("Parameter must be a pointer!");
-        },
-    }
-}
-
 fn eql(a: anytype, b: @TypeOf(a)) bool {
     const T = @TypeOf(a);
     if (comptime T == toolbox.String8) {
@@ -358,20 +299,20 @@ fn eql(a: anytype, b: @TypeOf(a)) bool {
     }
 
     switch (comptime @typeInfo(T)) {
-        .Struct => |info| {
+        .@"struct" => |info| {
             inline for (info.fields) |field_info| {
                 if (!eql(@field(a, field_info.name), @field(b, field_info.name))) return false;
             }
             return true;
         },
-        .ErrorUnion => {
+        .error_union => {
             if (a) |a_p| {
                 if (b) |b_p| return eql(a_p, b_p) else |_| return false;
             } else |a_e| {
                 if (b) |_| return false else |b_e| return a_e == b_e;
             }
         },
-        //.Union => |info| {
+        //.@"union" => |info| {
         //if (info.tag_type) |UnionTag| {
         //const tag_a = activeTag(a);
         //const tag_b = activeTag(b);
@@ -387,27 +328,27 @@ fn eql(a: anytype, b: @TypeOf(a)) bool {
 
         //@compileError("cannot compare untagged union type " ++ @typeName(T));
         //},
-        .Array => {
+        .array => {
             if (a.len != b.len) return false;
             for (a, 0..) |e, i|
                 if (!eql(e, b[i])) return false;
             return true;
         },
-        .Vector => |info| {
+        .vector => |info| {
             var i: usize = 0;
             while (i < info.len) : (i += 1) {
                 if (!eql(a[i], b[i])) return false;
             }
             return true;
         },
-        .Pointer => |info| {
+        .pointer => |info| {
             return switch (info.size) {
                 .One, .Many, .C => a == b,
                 //changed from std.meta.eql
                 .Slice => std.mem.eql(info.child, a, b),
             };
         },
-        .Optional => {
+        .optional => {
             if (a == null and b == null) return true;
             if (a == null or b == null) return false;
             return eql(a.?, b.?);

@@ -4,7 +4,7 @@ const std = @import("std");
 
 comptime {
     switch (toolbox.THIS_PLATFORM) {
-        .MacOS, .Playdate => {},
+        .MacOS, .Playdate, .Linux => {},
         else => {
             if (builtin.target.cpu.arch != .x86_64) {
                 @compileError("We only support AMD64 if platform isn't macOS or Playdate");
@@ -24,13 +24,12 @@ pub const Duration = struct {
     ticks: Ticks = 0,
 
     pub const Ticks = switch (toolbox.THIS_PLATFORM) {
-        .MacOS => i64,
         .Playdate => f32,
         else => i64,
     };
 
     const PlatformDuration = switch (toolbox.THIS_PLATFORM) {
-        .MacOS => MacOSDuration,
+        .MacOS, .Linux => UnixDuration,
         .Playdate => PlaydateDuration,
         else => AMD64Duration,
     };
@@ -42,6 +41,10 @@ pub const Duration = struct {
         return .{ .ticks = lhs.ticks - rhs.ticks };
     }
 
+    pub const from_nanoseconds = @field(PlatformDuration, "from_nanoseconds");
+    pub const from_microseconds = @field(PlatformDuration, "from_microseconds");
+    pub const from_milliseconds = @field(PlatformDuration, "from_milliseconds");
+    pub const from_seconds = @field(PlatformDuration, "from_seconds");
     pub const nanoseconds = @field(PlatformDuration, "nanoseconds");
     pub const microseconds = @field(PlatformDuration, "microseconds");
     pub const milliseconds = @field(PlatformDuration, "milliseconds");
@@ -64,28 +67,69 @@ pub fn now() Duration {
     switch (comptime toolbox.THIS_PLATFORM) {
         .MacOS => {
             const ctime = @cImport(@cInclude("time.h"));
-            const nanos = ctime.clock_gettime_nsec_np(ctime.CLOCK_MONOTONIC);
+            const nanos = ctime.clock_gettime_nsec_np(ctime.CLOCK_MONOTONIC_RAW);
             toolbox.assert(nanos != 0, "nanotime call failed!", .{});
             return .{ .ticks = @intCast(nanos) };
+        },
+        .Linux => {
+            if (comptime toolbox.THIS_HARDWARE == .ARM64) {
+                const ctime = @cImport(@cInclude("time.h"));
+                var tp = ctime.struct_timespec{};
+                const result = ctime.clock_gettime(
+                    ctime.CLOCK_MONOTONIC_RAW,
+                    &tp,
+                );
+                toolbox.expecteq(0, result, "clock_gettime() call failed.");
+                const ticks = tp.tv_nsec;
+
+                return .{ .ticks = ticks };
+            } else {
+                const result = amd64_read_time();
+                return result;
+            }
         },
         .Playdate => {
             return .{ .ticks = toolbox.playdate_get_seconds() };
         },
         else => {
-            var top: u64 = 0;
-            var bottom: u64 = 0;
-            asm volatile (
-                \\rdtsc
-                : [top] "={edx}" (top),
-                  [bottom] "={eax}" (bottom),
-            );
-            const tsc = (top << 32) | bottom;
-            return .{ .ticks = @intCast(tsc) };
+            const result = amd64_read_time();
+            return result;
         },
     }
 }
+fn amd64_read_time() Duration {
+    var top: u64 = 0;
+    var bottom: u64 = 0;
+    asm volatile (
+        \\rdtsc
+        : [top] "={edx}" (top),
+          [bottom] "={eax}" (bottom),
+    );
+    const tsc = (top << 32) | bottom;
+    return .{ .ticks = @intCast(tsc) };
+}
 
 const AMD64Duration = struct {
+    pub inline fn from_nanoseconds(ns: Nanoseconds) Duration {
+        const result = from_microseconds(ns / 1000);
+        return result;
+    }
+    pub inline fn from_microseconds(mcs: Microseconds) Duration {
+        toolbox.assert(amd64_ticks_to_microseconds > 0, "TSC calibration was not performed", .{});
+        const result = Duration{
+            .ticks = mcs * amd64_ticks_to_microseconds,
+        };
+        return result;
+    }
+    pub inline fn from_milliseconds(ms: Milliseconds) Duration {
+        const result = from_microseconds(ms * 1000);
+        return result;
+    }
+    pub inline fn from_seconds(sec: Seconds) Duration {
+        const sec_int: Microseconds = @intFromFloat(sec);
+        const result = from_microseconds(sec_int * 1_000_000);
+        return result;
+    }
     pub inline fn nanoseconds(self: Duration) Nanoseconds {
         return self.microseconds() * 1000;
     }
@@ -105,7 +149,24 @@ const AMD64Duration = struct {
     }
 };
 
-const MacOSDuration = struct {
+const UnixDuration = struct {
+    pub inline fn from_nanoseconds(ns: Nanoseconds) Duration {
+        const result = Duration{ .ticks = ns };
+        return result;
+    }
+    pub inline fn from_microseconds(mcs: Microseconds) Duration {
+        const result = from_nanoseconds(mcs * 1000);
+        return result;
+    }
+    pub inline fn from_milliseconds(ms: Milliseconds) Duration {
+        const result = from_nanoseconds(ms * 1_000_000);
+        return result;
+    }
+    pub inline fn from_seconds(sec: Seconds) Duration {
+        const sec_int: Nanoseconds = @intFromFloat(sec);
+        const result = from_nanoseconds(sec_int * 1_000_000_000);
+        return result;
+    }
     pub inline fn nanoseconds(self: Duration) Nanoseconds {
         return self.ticks;
     }
@@ -121,6 +182,25 @@ const MacOSDuration = struct {
     }
 };
 const PlaydateDuration = struct {
+    pub inline fn from_nanoseconds(ns: Nanoseconds) Duration {
+        const ns_float: Seconds = @intFromFloat(ns);
+        const result = from_seconds(ns_float / 1_000_000_000);
+        return result;
+    }
+    pub inline fn from_microseconds(mcs: Microseconds) Duration {
+        const mcs_float: Seconds = @intFromFloat(mcs);
+        const result = from_seconds(mcs_float / 1_000_000);
+        return result;
+    }
+    pub inline fn from_milliseconds(ms: Milliseconds) Duration {
+        const ms_float: Seconds = @intFromFloat(ms);
+        const result = from_seconds(ms_float / 1000);
+        return result;
+    }
+    pub inline fn from_seconds(sec: Seconds) Duration {
+        const result = Duration{ .ticks = sec };
+        return result;
+    }
     pub inline fn nanoseconds(self: Duration) Nanoseconds {
         return @intFromFloat(self.ticks * 1_000_000_000.0);
     }
