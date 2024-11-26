@@ -174,9 +174,9 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     }
 
     profiler.end_profiler();
-    // if (pdapi.is_button_down(pdapi.BUTTON_B)) {
-    draw_debug_and_profiler_hud(platform_state, command_count);
-    // }
+    if (pdapi.is_button_down(pdapi.BUTTON_B)) {
+        draw_debug_and_profiler_hud(platform_state, command_count);
+    }
     //draw fps
     {
         pdapi.draw_fps(pdapi.LCD_COLUMNS - 20, 0);
@@ -281,22 +281,15 @@ fn draw_debug_and_profiler_hud(
             arena,
         );
         F.add_line(
-            "fine x: {X}, fine y: {X}",
-            .{ game_state.entity_fine_position[0][0], game_state.entity_fine_position[0][1] },
+            "entity 3 fine x: {X}, fine y: {X}",
+            .{ game_state.entity_fine_position[3][0], game_state.entity_fine_position[3][1] },
             &lines,
             &background_width,
             arena,
         );
         F.add_line(
-            "dx: {X}, dy: {X}",
-            .{ game_state.entity_movement_delta[0], game_state.entity_movement_delta[1] },
-            &lines,
-            &background_width,
-            arena,
-        );
-        F.add_line(
-            "time: {X}, attract index: {}",
-            .{ game_state.wave_time, game_state.attract_mode_player_position_index },
+            "time: {X}",
+            .{game_state.wave_time},
             &lines,
             &background_width,
             arena,

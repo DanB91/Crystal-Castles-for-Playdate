@@ -8,6 +8,7 @@ pub const FAST_LINE_1_NUM_SEGMENTS = 4;
 pub const FAST_LINE_2_NUM_SEGMENTS = 8;
 
 const LEVEL_DATA = @embedFile("levels.bin");
+const EXPECTED_TEST_DATA = @embedFile("expected_values.bin");
 const z = std.mem.zeroes;
 
 //The game was designed around the fact that VBlank happend between
@@ -798,6 +799,8 @@ pub const GameState = struct {
 
     debug_should_not_yield: bool = true,
 
+    expected_test_data: []const ExpectedTestData = z([]const ExpectedTestData),
+
     fn EntityField(comptime T: type) type {
         return [MAX_NUMBER_OF_ENTITIES]T;
     }
@@ -840,6 +843,11 @@ const Scoreboard = struct {
         score: isize = 0,
     };
 };
+const ExpectedTestData = extern struct {
+    wave_time: u16,
+    entity_positions: [0x20]u8,
+    entity_fine_positions: [0x20]u8,
+};
 
 pub fn init(game_state: *GameState, global_arena: *toolbox.Arena) void {
     const draw_line_command_queue =
@@ -853,11 +861,14 @@ pub fn init(game_state: *GameState, global_arena: *toolbox.Arena) void {
 fn reset(game_state: *GameState) void {
     const draw_line_command_queue = game_state.draw_command_queue;
     const rand = toolbox.init_random(@bitCast(toolbox.now().microseconds()));
+    const expected_test_data =
+        @as([*]const ExpectedTestData, @ptrCast(@alignCast(EXPECTED_TEST_DATA)))[0 .. EXPECTED_TEST_DATA.len / @sizeOf(ExpectedTestData)];
     game_state.* = .{
         .dt = .{},
         .global_arena = game_state.global_arena,
         .draw_command_queue = draw_line_command_queue,
         .rng_state = rand,
+        .expected_test_data = expected_test_data,
     };
     game_state.draw_command_queue.clear();
 
@@ -1336,7 +1347,6 @@ fn move_entity(
                 //@        TRAM AT.YD(Y) EN.YD
                 game_state.entity_movement_delta =
                     ATTRACT_MODE_PLAYER_DELTAS[game_state.attract_mode_player_position_index];
-                brk(game_state, entity);
                 //@       ENDIF
             }
             //@      ENDIF
@@ -1347,7 +1357,6 @@ fn move_entity(
         //@      TRAI 0 EN.YD
         //@     ENDIF
         game_state.entity_movement_delta = ZV2;
-        brk(game_state, entity);
     }
 
     //@     LDA EN.GDL
@@ -1359,7 +1368,6 @@ fn move_entity(
             //@       TRAI 0 EN.XD        ;  creature freeze
             //@       STA EN.YD
             game_state.entity_movement_delta = ZV2;
-            brk(game_state, entity);
         }
         //@       ENDIF
         //@     ENDIF
@@ -1400,7 +1408,7 @@ fn move_entity(
     //@      JSR EN.CYD
     //@     ENDIF
     game_state.entity_fine_position[entity] += game_state.entity_movement_delta;
-    brk(game_state, entity);
+
     if (game_state.entity_movement_delta[0] >= 0) {
         if (game_state.entity_fine_position[entity][0] >= 0x14) {
             const square_height_index = out_square_height_index.* + PLAYFIELD_HEIGHT;
@@ -1410,7 +1418,6 @@ fn move_entity(
                 game_state,
             );
             if (result.did_collide) {
-                //TODO: okay so its hitting here....
                 game_state.entity_fine_position[entity][0] = 0x13;
                 game_state.entity_wall_collision[entity] = true;
             } else {
@@ -1614,14 +1621,25 @@ const CollisionResult = struct {
     did_collide: bool = false,
     in_tunnel: bool = false, //for use in EN.MUP
 };
+fn check_collision_flag(
+    square_height_index: usize,
+    entity: usize,
+    game_state: *GameState,
+) bool {
+    //TODO: figure out what these flags are
+    const flags = game_state.current_wave_data[
+        square_height_index +
+            PLAYFIELD_HEIGHT * PLAYFIELD_HEIGHT
+    ];
+    const did_collide = flags & 0x8 != 0 and entity != PLAYER_ENTITY;
+    return did_collide;
+}
 fn check_wall_collision(
     square_height_index: usize,
     entity: usize,
     game_state: *GameState,
 ) CollisionResult {
     //This is a combo of all the EN.CXI, EN.CYI, etc and EN.B2C subroutines
-    const square_height = game_state.current_wave_data[square_height_index];
-    const vertical_distance = game_state.entity_height[entity] - square_height;
     //TODO: figure out what these flags are
     const flags = game_state.current_wave_data[
         square_height_index +
@@ -1630,6 +1648,9 @@ fn check_wall_collision(
 
     var did_collide = flags & 0x8 != 0 and entity != PLAYER_ENTITY;
     var in_tunnel = flags & 0x20 != 0;
+
+    const square_height = game_state.current_wave_data[square_height_index];
+    const vertical_distance = game_state.entity_height[entity] - square_height;
     if (@abs(vertical_distance) <= 2) {
         in_tunnel = false;
     } else if (!in_tunnel) {
@@ -1742,31 +1763,45 @@ fn animate_player(game_state: *GameState) void {
     //@     CMP #1
     //@     IFEQ
     if (game_state.entity_life_mode[entity] == .Dying) {
-        //TODO:
-        unreachable;
         //@ EN.DTL:
         //@     .BYTE 105.,105.,85.,81.
         //@     .BYTE 101.,101.,85.,81.
         //@     .BYTE 97.,93.,93.,81.
         //@     .BYTE 89.,89.,85.,81.
+        const PLAYER_DYING_PICTURES = [16]isize{
+            105, 105, 85, 81,
+            101, 101, 85, 81,
+            97,  93,  93, 81,
+            89,  89,  85, 81,
+        };
         //@      LDA EN.DEL
+        const delay = game_state.entity_delay[PLAYER_ENTITY];
         //@      IFNE
-        //@       LSRS 5    ;  input 0-7F, output 0-3
-        //@       AND #03    ;  just in case
-        //@       STA TEMP1
-        //@       LDA WV.LIV
-        //@       CMP #4
-        //@       IFCS
-        //@        LDA #4
-        //@       ENDIF
-        //@       SUB #1
-        //@       ASLS 2
-        //@       ADD TEMP1
-        //@       TAY
-        //@       LDA EN.DTL(Y)
-        //@      JSR EN.PCF
-        //@      ENDIF
+        if (delay > 0) {
+            //@       LSRS 5    ;  input 0-7F, output 0-3
+            //@       AND #03    ;  just in case
+            var picture_index = (delay >> 5) & 3;
+
+            //@       STA TEMP1
+            //@       LDA WV.LIV
+            //@       CMP #4
+            //@       IFCS
+            //@        LDA #4
+            //@       ENDIF
+            const lives = @min(game_state.lives, 4);
+            //@       SUB #1
+            //@       ASLS 2
+            //@       ADD TEMP1
+            picture_index += (lives - 1) << 2;
+            //@       TAY
+            //@       LDA EN.DTL(Y)
+            const picture = PLAYER_DYING_PICTURES[@intCast(picture_index)];
+            //@      JSR EN.PCF
+            fill_entity_pictures(picture, entity, game_state);
+            //@      ENDIF
+        }
         //@      RTS
+        return;
         //@     ENDIF
     }
 
@@ -1921,8 +1956,6 @@ fn detect_collision(entity: usize, game_state: *GameState) void {
 
         //@      TRAI 01 EN.ANV(X)
         game_state.entity_animation[entity] = 1;
-        //*******TODO********
-        unreachable;
         //@      LDA #10    ;  1000 points
         //@ 41$:
         //@      STA 1+SC.INC
@@ -1931,9 +1964,13 @@ fn detect_collision(entity: usize, game_state: *GameState) void {
         //@      STA 2+SC.INC
 
         //@      JSR SC.UPD
+        update_score(1000, game_state);
         //@      TRAI 0D EN.STA(X)
+        game_state.entity_state[entity] = .ScoreDisplay;
         //@      TRAI 080 EN.DEL(X)
+        game_state.entity_delay[entity] = 0x80;
         //@      RTS
+        return;
         //@     ENDIF
     }
 
@@ -1959,62 +1996,129 @@ fn detect_collision(entity: usize, game_state: *GameState) void {
         //@     ENDIF
     }
 
-    //*******TODO********
-    unreachable;
     //@     LDA EN.STA(X)
-    //@     CMP #0D        ;  score display
-    //@     IFEQ
-    //@      RTS
-    //@     ENDIF
+    switch (game_state.entity_state[entity]) {
+        .ScoreDisplay => {
+            //@     CMP #0D        ;  score display
+            //@     IFEQ
+            //@      RTS
+            //@     ENDIF
+            return;
+        },
+        .Hat => {
+            //@     CMP #0A        ;  hat
+            //@     IFEQ
+            //@      TRAI 0FF EN.CDL    ;  collision delay
+            game_state.entity_collision_delay = 0xFF;
 
-    //@     CMP #0A        ;  hat
-    //@     IFEQ
-    //@      TRAI 0FF EN.CDL    ;  collision delay
+            //@      LDA #8
+            //@      JSR MN.SN1
+            //TODO: game sound
 
-    //@      LDA #8
-    //@      JSR MN.SN1
-    //@ 42$:     TRAI 0 EN.ANV(X)
-    //@      LDA #05
-    //@      BNE 41$    ;   BRA
-    //@     ENDIF
+            //@ 42$:     TRAI 0 EN.ANV(X)
+            game_state.entity_animation[entity] = 0;
 
-    //@ ;    LDA EN.STA(X)    ;  if creature eating
-    //@     CMP #3
-    //@     IFEQ
-    //@      LDA EN.JFL
-    //@      IFEQ        ;  and no jumping
-    //@       LDA #2
-    //@       JSR MN.SN1
-    //@       JMP 42$
-    //@      ENDIF
-    //@     ELSE
-    //@      LDA EN.JFL    ; if jumping
-    //@      IFNE
-    //@       LDA EN.STA(X)
-    //@       IFEQ        ; if  a tree
-    //@        TRAI 0 EN.ANV(X)    ;  youth regained
-    //@        LDY WV.DF2
-    //@        TRAM DF.TRG(Y) EN.DEL(X)    ; tree growing time
-    //@        TRAI 0 1+EN.DEL(X)
-    //@       ELSE        ; if not
-    //@        CMP #1
-    //@        IFPL
-    //@        CMP #3
-    //@        IFMI
-    //@         TRAI 5 EN.STA(X)    ;  stun it
-    //@         TR16AI 60 EN.DEL(X)
-    //@        ENDIF
-    //@        ENDIF
-    //@       ENDIF
-    //@      ELSE
-    //@       TRAI 1 EN.LMD    ;  else player death
-    //@       TRAI 07F EN.DEL
-    //@       LDA #3
-    //@       JSR MN.SN1    ;  pl death sound
-    //@      ENDIF
-    //@     ENDIF
+            //@      LDA #05
+            //@      BNE 41$    ;   BRA
 
-    //@     RTS
+            //@ 41$:
+            //@      STA 1+SC.INC
+            //@      LDA #0
+            //@      STA SC.INC
+            //@      STA 2+SC.INC
+
+            //@      JSR SC.UPD
+            update_score(500, game_state);
+            //@      TRAI 0D EN.STA(X)
+            game_state.entity_state[entity] = .ScoreDisplay;
+            //@      TRAI 080 EN.DEL(X)
+            game_state.entity_delay[entity] = 0x80;
+            //@      RTS
+            return;
+            //@     ENDIF
+
+        },
+        .PlungerEating => {
+            //@ ;    LDA EN.STA(X)    ;  if creature eating
+            //@     CMP #3
+            //@     IFEQ
+            //@      LDA EN.JFL
+            //@      IFEQ        ;  and no jumping
+            if (game_state.entity_jump_flag) {
+                //@       LDA #2
+                //@       JSR MN.SN1
+                //TODO: game sound
+            }
+            //@       JMP 42$
+            //@ 42$:     TRAI 0 EN.ANV(X)
+            game_state.entity_animation[entity] = 0;
+
+            //@      LDA #05
+            //@      BNE 41$    ;   BRA
+
+            //@ 41$:
+            //@      STA 1+SC.INC
+            //@      LDA #0
+            //@      STA SC.INC
+            //@      STA 2+SC.INC
+
+            //@      JSR SC.UPD
+            update_score(500, game_state);
+            //@      TRAI 0D EN.STA(X)
+            game_state.entity_state[entity] = .ScoreDisplay;
+            //@      TRAI 080 EN.DEL(X)
+            game_state.entity_delay[entity] = 0x80;
+            //@      RTS
+            return;
+            //@      ENDIF
+            //@     ELSE
+
+        },
+        else => {
+            //@      LDA EN.JFL    ; if jumping
+            //@      IFNE
+            if (game_state.entity_jump_flag) {
+                //@       LDA EN.STA(X)
+                switch (game_state.entity_state[entity]) {
+                    .PlayerOrTree => {
+                        //@       IFEQ        ; if  a tree
+                        //TODO:
+                        unreachable;
+                        //@        TRAI 0 EN.ANV(X)    ;  youth regained
+                        //@        LDY WV.DF2
+                        //@        TRAM DF.TRG(Y) EN.DEL(X)    ; tree growing time
+                        //@        TRAI 0 1+EN.DEL(X)
+
+                    },
+                    //@        CMP #1
+                    //@        IFPL
+                    //@        CMP #3
+                    //@        IFMI
+                    .PlungerMovingTowardsWall, .PlungerFollowsWall => {
+                        //@         TRAI 5 EN.STA(X)    ;  stun it
+                        game_state.entity_state[entity] = .PlungerStunned;
+                        //@         TR16AI 60 EN.DEL(X)
+                        game_state.entity_delay[entity] = 0x60;
+                        //@        ENDIF
+                        //@        ENDIF
+
+                    },
+                    else => {},
+                }
+            }
+            //@      ELSE
+            else {
+                //@       TRAI 1 EN.LMD    ;  else player death
+                game_state.entity_life_mode[PLAYER_ENTITY] = .Dying;
+                //@       TRAI 07F EN.DEL
+                game_state.entity_delay[PLAYER_ENTITY] = 0x7F;
+                //@       LDA #3
+                //@       JSR MN.SN1    ;  pl death sound
+                //TODO: game sound
+                //@      ENDIF
+            }
+        },
+    }
 }
 
 //SC.UPD
@@ -2274,7 +2378,6 @@ fn output_entity(entity: usize, game_state: *GameState) void {
     //@     STA EN.Y(X)    ; -(EN.IY+8)/16+HEIGHT
     const fine_position = game_state.entity_fine_position[entity];
     const picture_position = game_state.entity_picture_position[entity];
-    brk(game_state, entity);
 
     //TODO: I think this is right??
     game_state.entity_position[entity] = .{
@@ -2286,6 +2389,12 @@ fn output_entity(entity: usize, game_state: *GameState) void {
             @divTrunc((fine_position[1] + 8), 16) +
             (game_state.entity_height[entity] + game_state.entity_hof[entity]),
     };
+    if (entity == 2) {
+        toolbox.println(
+            "Position: {X}, Fine Position: {X}, Picture position: {X}",
+            .{ game_state.entity_position[entity], game_state.entity_fine_position[entity], picture_position },
+        );
+    }
 
     //@     RTS
 
@@ -2497,7 +2606,7 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
                 //@      JSR GP.TRC
                 //@      STA EN.GP1(X)
                 game_state.general_purpose_1 = toolbox.clamp(
-                    delta_x,
+                    game_state.general_purpose_1,
                     -game_state.crystal_monster_speed,
                     game_state.crystal_monster_speed,
                 );
@@ -2530,7 +2639,7 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
                 //@      JSR GP.TRC
                 //@      STA EN.GP2(X)
                 game_state.general_purpose_2 = toolbox.clamp(
-                    delta_y,
+                    game_state.general_purpose_2,
                     -game_state.crystal_monster_speed,
                     game_state.crystal_monster_speed,
                 );
@@ -2541,7 +2650,6 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
             //@     TRAM EN.GP2(X) EN.YD
             game_state.entity_movement_delta =
                 .{ game_state.general_purpose_1, game_state.general_purpose_2 };
-            brk(game_state, entity);
             //@     RTS
         },
         .Swarm => {
@@ -2589,8 +2697,37 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
             //@     JMP 45$
             killer_algorithm(entity, game_state);
         },
+        .PlungerStunned => {
+            //  DEC16A EN.DEL(X)
+            game_state.entity_delay[entity] -= 1;
+            //  LDA EN.DEL(X)
+            //  IFEQ
+            //  LDA 1+EN.DEL(X)
+            //  IFEQ
+            if (game_state.entity_delay[entity] == 0) {
+                //   TRAI 1 EN.STA(X)
+                game_state.entity_state[entity] = .PlungerMovingTowardsWall;
+                //   TRAI 1 EN.SP1(X)
+                game_state.entity_slow_speed[entity] = 1;
+
+                //   TR16AI 50 EN.DEL(X)
+                game_state.entity_delay[entity] = 0x50;
+                //   LDA RANDOM
+                //   AND #03
+                const direction: isize = @intCast(toolbox.random32(&game_state.rng_state) & 3);
+                //   STA EN.DR(X)
+                game_state.entity_direction[entity] = direction;
+                //  ENDIF
+                //  ENDIF
+            }
+
+            // LDA #80
+            // JSR EN.PCF
+            fill_entity_pictures(0x80, entity, game_state);
+        },
+        else =>
         //TODO
-        else => unreachable,
+        unreachable,
     }
 }
 //45$
@@ -2673,7 +2810,6 @@ fn killer_algorithm(entity: usize, game_state: *GameState) void {
             game_state.entity_movement_delta[i] = @max(delta[i], -slow_speed);
         }
     }
-    brk(game_state, entity);
 
     //@ JMP 50$
     clamp_delta_entity_movement_delta(game_state);
@@ -2706,7 +2842,6 @@ fn entity_life_mode_calculation(entity: usize, game_state: *GameState) void {
     //@     TRAI 0 EN.XD
     //@     STA EN.YD
     game_state.entity_movement_delta = ZV2;
-    brk(game_state, entity);
     switch (game_state.entity_life_mode[entity]) {
         .Spawning => {
             //@   40$:        ;  if being born, then come in from top
@@ -2940,7 +3075,6 @@ fn calculate_entity_deltas(entity: usize, game_state: *GameState) void {
                 0,
                 game_state.entity_slow_speed[entity],
             };
-            brk(game_state, entity);
         },
         1 => {
             //@      LDA EN.SP1(X)
@@ -2951,7 +3085,6 @@ fn calculate_entity_deltas(entity: usize, game_state: *GameState) void {
                 -game_state.entity_slow_speed[entity],
                 0,
             };
-            brk(game_state, entity);
         },
         2 => {
             //@      TRAI 0 EN.XD
@@ -2962,7 +3095,6 @@ fn calculate_entity_deltas(entity: usize, game_state: *GameState) void {
                 0,
                 -game_state.entity_slow_speed[entity],
             };
-            brk(game_state, entity);
         },
         3 => {
             //@      TRAM EN.SP1(X) EN.XD
@@ -2972,7 +3104,6 @@ fn calculate_entity_deltas(entity: usize, game_state: *GameState) void {
                 game_state.entity_slow_speed[entity],
                 0,
             };
-            brk(game_state, entity);
         },
         else => unreachable,
     }
@@ -4037,15 +4168,14 @@ fn init_entity(entity: usize, game_state: *GameState) void {
                     }
                     //@     ENDIF
                 }
-                //@    ELSE
-                else {
-                    //@     TRAI 3 EN.LMD(X)
-                    game_state.entity_life_mode[entity] = .Dead;
-                    //@    ENDIF
-                }
                 //@    ENDIF
             }
-            //@    ENDIF
+            //@    ELSE
+            else {
+                //@     TRAI 3 EN.LMD(X)
+                game_state.entity_life_mode[entity] = .Dead;
+                //@    ENDIF
+            }
         },
     }
 
@@ -5970,6 +6100,49 @@ fn initialize_game_start_state(game_state: *GameState) void {
 fn frame_handler(game_state: *GameState) void {
     //@    10$:     LSR SYNC        ;
     //@     BCC 10$        ;  frame handler
+
+    //Check against the arcade coordinates
+    if (game_state.current_state == .GamePlay and
+        game_state.wave_time < game_state.expected_test_data.len)
+    {
+        const test_data = game_state.expected_test_data[@intCast(game_state.wave_time)];
+        toolbox.expecteq(
+            test_data.wave_time,
+            game_state.wave_time,
+            "Unexpected wave time",
+        );
+        for (0..MAX_NUMBER_OF_ENTITIES) |entity| {
+            const expected_x = test_data.entity_positions[entity * 2];
+            const expected_y = test_data.entity_positions[entity * 2 + 1];
+            const expected_fine_x = test_data.entity_fine_positions[entity * 2];
+            const expected_fine_y = test_data.entity_fine_positions[entity * 2 + 1];
+            const actual_x: u8 = @intCast(game_state.entity_position[entity][0] & 0xFF);
+            const actual_y: u8 = @intCast(game_state.entity_position[entity][1] & 0xFF);
+            const actual_fine_x: u8 = @intCast(game_state.entity_fine_position[entity][0] & 0xFF);
+            const actual_fine_y: u8 = @intCast(game_state.entity_fine_position[entity][1] & 0xFF);
+
+            toolbox.expect(
+                expected_x == actual_x,
+                "Unexpected x position: Expected: {X}, Actual: {X}, Wave Time: {X}, Entity: {X}",
+                .{ expected_x, actual_x, game_state.wave_time, entity },
+            );
+            toolbox.expect(
+                expected_y == actual_y,
+                "Unexpected y position: Expected: {X}, Actual: {X}, Wave Time: {X}, Entity: {X}",
+                .{ expected_y, actual_y, game_state.wave_time, entity },
+            );
+            toolbox.expect(
+                expected_fine_x == actual_fine_x,
+                "Unexpected fine x position: Expected: {X}, Actual: {X}, Wave Time: {X}, Entity: {X}",
+                .{ expected_fine_x, actual_fine_x, game_state.wave_time, entity },
+            );
+            toolbox.expect(
+                expected_fine_y == actual_fine_y,
+                "Unexpected fine y position: Expected: {X}, Actual: {X}, Wave Time: {X}, Entity: {X}",
+                .{ expected_fine_y, actual_fine_y, game_state.wave_time, entity },
+            );
+        }
+    }
     next_frame(game_state);
 
     //@    INC16 FRAME
@@ -6788,22 +6961,4 @@ inline fn u8lt(a: isize, b: isize) bool {
 
 fn check_and_display_atari_easter_egg() void {
     //TODO
-}
-
-fn brk(game_state: *GameState, entity: usize) void {
-    if (game_state.is_in_attract_mode and entity == 0) {
-        if (game_state.jump_button_pressed) {
-            asm volatile ("nop");
-            asm volatile ("nop");
-            asm volatile ("nop");
-            asm volatile ("nop");
-            asm volatile ("nop");
-            asm volatile ("nop");
-        } else {
-            asm volatile ("nop");
-            asm volatile ("nop");
-            asm volatile ("nop");
-            asm volatile ("nop");
-        }
-    }
 }

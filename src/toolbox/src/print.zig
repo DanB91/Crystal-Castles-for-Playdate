@@ -39,7 +39,7 @@ fn platform_print_to_console(comptime fmt: []const u8, args: anytype, comptime i
             _ = write(if (is_err) 2 else 1, to_print.ptr, to_print.len);
         },
         .Playdate => {
-            var buffer = [_]u8{0} ** 128;
+            var buffer = [_]u8{0} ** 256;
             const to_print = if (is_err)
                 std.fmt.bufPrintZ(&buffer, "ERROR: " ++ fmt, args) catch {
                     toolbox.playdate_log_to_console("String too long to print");

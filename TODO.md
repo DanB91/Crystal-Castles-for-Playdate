@@ -1,9 +1,9 @@
-
-- Swarm erroneously spawns in attract mode
+- Crystal ball enemies seem a bit too slow compared to the arcade version
 - Add memory consumption
 - Some of the entity_life_modes at the start of EN.GP are not correct. The modes toward
     the end of the array should be .Dead and not .Alive
 - We probablty want to write some tool to fastforward gamestates.
+X Swarm erroneously spawns in attract mode
 X Sprite data looks good so far. Though it looks like the bear is the first one drawn.  
     Confirm in move_player_to_destination that the bear is eventually drawn
 X Finish crystal_castles.zig:1355
