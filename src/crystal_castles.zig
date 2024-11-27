@@ -9,6 +9,8 @@ pub const FAST_LINE_2_NUM_SEGMENTS = 8;
 
 const LEVEL_DATA = @embedFile("levels.bin");
 const EXPECTED_TEST_DATA = @embedFile("expected_values.bin");
+//TODO this fails when set to true! See TODO.md
+const VALIDATE_AGAINST_ARCADE = false;
 const z = std.mem.zeroes;
 
 //The game was designed around the fact that VBlank happend between
@@ -768,8 +770,8 @@ pub const GameState = struct {
 
     general_start_delay: isize = 0, //EN.GDL
 
-    general_purpose_1: isize = 0, //EN.GP1
-    general_purpose_2: isize = 0, //EN.GP2
+    general_purpose_1: EntityField(isize) = z(EntityField(isize)), //EN.GP1
+    general_purpose_2: EntityField(isize) = z(EntityField(isize)), //EN.GP2
 
     wave_gems_left: isize = 0, //CE.COC
     entity_that_took_last_gem: usize = 0, //EN.LDF
@@ -787,7 +789,7 @@ pub const GameState = struct {
     lives: isize = 0, //P1.LIV or WV.LIV
     score: isize = 0, //P1.SCO or SC.SCO
 
-    frame: isize = 0, //FRAME
+    frame: isize = 1, //FRAME
     number_of_credits: isize = 0, //$$CRDT or $CNCT
     current_wave_data: [WAVE_DATA_SIZE]u8 = undefined, //CTRAM,
 
@@ -1012,7 +1014,6 @@ pub fn update(game_state: *GameState) void {
     }
 
     game_state.debug_should_not_yield = false;
-
     while (game_state.current_state == .GamePlay) {
         //@  JSR MN.FRA        ;  frame handler
         frame_handler(game_state);
@@ -1299,7 +1300,7 @@ fn move_entity(
     //@     LDA EN.JFL
     //@     BNE 10$
     //@     ENDIF
-    if (entity == PLAYER_ENTITY and !game_state.entity_jump_flag) {
+    if (entity != PLAYER_ENTITY or !game_state.entity_jump_flag) {
         //@     JSR EN.CDT
         detect_gem(entity, game_state);
         //@ 10$:
@@ -1312,7 +1313,7 @@ fn move_entity(
 
     //@     LDA EN.LMD
     //@     IFEQ        ;  if player alive
-    if (game_state.entity_life_mode[entity] == .Alive) {
+    if (game_state.entity_life_mode[PLAYER_ENTITY] == .Alive) {
         //@      TXA
         //@      IFEQ
         if (entity == PLAYER_ENTITY) {
@@ -1407,6 +1408,7 @@ fn move_entity(
     //@     ELSE
     //@      JSR EN.CYD
     //@     ENDIF
+
     game_state.entity_fine_position[entity] += game_state.entity_movement_delta;
 
     if (game_state.entity_movement_delta[0] >= 0) {
@@ -1762,7 +1764,7 @@ fn animate_player(game_state: *GameState) void {
     //@     LDA EN.LMD
     //@     CMP #1
     //@     IFEQ
-    if (game_state.entity_life_mode[entity] == .Dying) {
+    if (game_state.entity_life_mode[PLAYER_ENTITY] == .Dying) {
         //@ EN.DTL:
         //@     .BYTE 105.,105.,85.,81.
         //@     .BYTE 101.,101.,85.,81.
@@ -1910,7 +1912,9 @@ fn detect_collision(entity: usize, game_state: *GameState) void {
     //@     ASLS 3
     //@     SUB EN.T4
     //@     STA EN.T5
-    const player_entity_delta_y = (game_state.entity_fine_position[PLAYER_ENTITY][1] * 8) - entity_fine_y + 0x80;
+    const player_entity_delta_y =
+        (game_state.entity_fine_position[PLAYER_ENTITY][1] * 8) -
+        entity_fine_y; //TODO: where did this come from: + 0x80;
 
     //@     LDA EN.MY
     //@     SBC EN.MY(X)
@@ -2229,7 +2233,7 @@ fn detect_gem(entity: usize, game_state: *GameState) void {
         return;
     }
     const entity_flags = &game_state.current_wave_data[
-        game_state.entity_playfield_square_flags_index[PLAYER_ENTITY]
+        game_state.entity_playfield_square_flags_index[entity]
     ];
     //@     LDA @EZ.MA2(Y)
     //@     AND #10
@@ -2389,12 +2393,6 @@ fn output_entity(entity: usize, game_state: *GameState) void {
             @divTrunc((fine_position[1] + 8), 16) +
             (game_state.entity_height[entity] + game_state.entity_hof[entity]),
     };
-    if (entity == 2) {
-        toolbox.println(
-            "Position: {X}, Fine Position: {X}, Picture position: {X}",
-            .{ game_state.entity_position[entity], game_state.entity_fine_position[entity], picture_position },
-        );
-    }
 
     //@     RTS
 
@@ -2596,7 +2594,7 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
                 //@        LDA EN.GP1(X)
                 //@       ENDIF
                 //@      ENDIF
-                game_state.general_purpose_1 += if (delta_x < 0)
+                game_state.general_purpose_1[entity] += if (delta_x < 0)
                     -1
                 else if (delta_x >= 1)
                     1
@@ -2605,8 +2603,8 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
 
                 //@      JSR GP.TRC
                 //@      STA EN.GP1(X)
-                game_state.general_purpose_1 = toolbox.clamp(
-                    game_state.general_purpose_1,
+                game_state.general_purpose_1[entity] = toolbox.clamp(
+                    game_state.general_purpose_1[entity],
                     -game_state.crystal_monster_speed,
                     game_state.crystal_monster_speed,
                 );
@@ -2630,7 +2628,7 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
                 //@        LDA EN.GP2(X)
                 //@       ENDIF
                 //@      ENDIF
-                game_state.general_purpose_2 += if (delta_y < 0)
+                game_state.general_purpose_2[entity] += if (delta_y < 0)
                     -1
                 else if (delta_y >= 1)
                     1
@@ -2638,8 +2636,8 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
                     0;
                 //@      JSR GP.TRC
                 //@      STA EN.GP2(X)
-                game_state.general_purpose_2 = toolbox.clamp(
-                    game_state.general_purpose_2,
+                game_state.general_purpose_2[entity] = toolbox.clamp(
+                    game_state.general_purpose_2[entity],
                     -game_state.crystal_monster_speed,
                     game_state.crystal_monster_speed,
                 );
@@ -2649,7 +2647,7 @@ fn entity_state_calculation(entity: usize, game_state: *GameState) void {
             //@     TRAM EN.GP1(X) EN.XD
             //@     TRAM EN.GP2(X) EN.YD
             game_state.entity_movement_delta =
-                .{ game_state.general_purpose_1, game_state.general_purpose_2 };
+                .{ game_state.general_purpose_1[entity], game_state.general_purpose_2[entity] };
             //@     RTS
         },
         .Swarm => {
@@ -4444,7 +4442,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
     //TODO: figure out what these flags are
     const flags =
         game_state.current_wave_data[
-        game_state.entity_playfield_square_flags_index[PLAYER_ENTITY]
+        game_state.entity_playfield_square_flags_index[entity]
     ];
     //@    AND #40
     //@    IFNE
@@ -5198,7 +5196,10 @@ fn update_current_wave_and_difficulty(game_state: *GameState) void {
     //@             ; turn off only one of them
     if (wave_number_table_index & 0x30 == 0) {
         //@     LDA RANDOM
-        const r: i32 = @bitCast(toolbox.random32(&game_state.rng_state));
+        const r: i32 = if (comptime VALIDATE_AGAINST_ARCADE)
+            0
+        else
+            @bitCast(toolbox.random32(&game_state.rng_state));
         //@     IFMI
         //@      STX CT.HR1
         //@     ELSE
@@ -6102,7 +6103,8 @@ fn frame_handler(game_state: *GameState) void {
     //@     BCC 10$        ;  frame handler
 
     //Check against the arcade coordinates
-    if (game_state.current_state == .GamePlay and
+    if ((comptime VALIDATE_AGAINST_ARCADE) and
+        game_state.current_state == .GamePlay and
         game_state.wave_time < game_state.expected_test_data.len)
     {
         const test_data = game_state.expected_test_data[@intCast(game_state.wave_time)];

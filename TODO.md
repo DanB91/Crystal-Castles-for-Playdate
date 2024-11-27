@@ -1,8 +1,11 @@
-- Crystal ball enemies seem a bit too slow compared to the arcade version
+- Fix assert firing when VALIDATE_AGAINST_ARCADE is true
+    - Looks like the crystal ball is moving a tiny bit when it shouldn't, but seems to not affect visuals
+    - Maybe we can put this on the back burner now...
 - Add memory consumption
 - Some of the entity_life_modes at the start of EN.GP are not correct. The modes toward
     the end of the array should be .Dead and not .Alive
 - We probablty want to write some tool to fastforward gamestates.
+X Get enemies to pick up gems
 X Swarm erroneously spawns in attract mode
 X Sprite data looks good so far. Though it looks like the bear is the first one drawn.  
     Confirm in move_player_to_destination that the bear is eventually drawn
