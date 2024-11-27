@@ -1641,10 +1641,10 @@ fn check_wall_collision(
 ) CollisionResult {
     //This is a combo of all the EN.CXI, EN.CYI, etc and EN.B2C subroutines
     //TODO: figure out what these flags are
-    const flags = game_state.current_wave_data[
+    const flags_index =
         square_height_index +
-            PLAYFIELD_HEIGHT * PLAYFIELD_HEIGHT
-    ];
+        PLAYFIELD_HEIGHT * PLAYFIELD_HEIGHT;
+    const flags = game_state.current_wave_data[flags_index];
 
     var did_collide = flags & 0x8 != 0 and entity != PLAYER_ENTITY;
     var in_tunnel = flags & 0x20 != 0;
@@ -4474,7 +4474,7 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         //@     ORA #08
         //@     STA @EZ.MA2(Y)
         game_state.current_wave_data[
-            game_state.entity_playfield_square_flags_index[PLAYER_ENTITY]
+            game_state.entity_playfield_square_flags_index[entity]
         ] |= 0b00001000;
 
         //@    ENDIF
@@ -5463,7 +5463,7 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
                 //@ AND #^B11111011    ;  Accessibility=0
                 //@ STA @CT.A2L(Y)
                 game_state.current_wave_data[game_state.castle_a2l] &=
-                    ~@as(u8, 0b11111011);
+                    @as(u8, 0b11111011);
 
                 //@ENDIF
             }
