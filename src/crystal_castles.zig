@@ -645,10 +645,12 @@ pub const GameState = struct {
         StartGame, //GM.ST -- GM.STA is set to 1
         StartOfWave, //GM.SW -- GM.STA is set to 2
         GamePlay, //GM.GP -- GM.STA is set to 3
-
+        DeathSequence, //GM.DT -- GM.STA is set to 4
         EndOfWave, //GM.EW -- GM.STA is set to 5
+        EndOfGame, //GM.EG -- GM.STA is set to 6
 
         InitWaveMotionObjects, //GM.WO -- GM.STA is set to 0xA
+        HallOfFame, //GM.HF -- GM.STA is set to 0xD
         AttractModeMainLoop, //GM.AT -- GM.STA is set to 0xF
     } = .DrawBackgroundAndCastle,
 
@@ -830,15 +832,16 @@ const LifeMode = enum(isize) {
     Spawning = 2,
     Dead = 3,
 };
+//@        HFSIZ=250.
+const HALL_OF_FAME_SIZE = 250;
 const Scoreboard = struct {
-    //@        HFSIZ=250.
     //@SC.HS1:    .BLKB HFSIZ    ;  high scores
     //@SC.HS2: .BLKB HFSIZ
     //@SC.HS3:    .BLKB HFSIZ
     //@SC.HI1:    .BLKB HFSIZ    ;  and initials
     //@SC.HI2: .BLKB HFSIZ
     //@SC.HI3: .BLKB HFSIZ
-    entries: [250]Entry = [_]Entry{.{}} ** 250,
+    entries: [HALL_OF_FAME_SIZE]Entry = ([_]Entry{.{}} ** HALL_OF_FAME_SIZE),
 
     const Entry = struct {
         name: toolbox.String8 = toolbox.str8lit("DAN"),
@@ -1013,7 +1016,6 @@ pub fn update(game_state: *GameState) void {
         //@ JMP GM.ENL
     }
 
-    game_state.debug_should_not_yield = false;
     while (game_state.current_state == .GamePlay) {
         //@  JSR MN.FRA        ;  frame handler
         frame_handler(game_state);
@@ -1041,6 +1043,23 @@ pub fn update(game_state: *GameState) void {
 
         //@     JMP GM.ENL
     }
+    while (true) {
+        switch (game_state.current_state) {
+            .DeathSequence => update_death_sequence_state(game_state),
+            .EndOfGame => update_end_of_game_state(game_state),
+            .HallOfFame => update_hall_of_fame_state(game_state),
+
+            //TODO incorporate the other states into this switch statement
+            .AttractModeMainLoop,
+            .DrawBackgroundAndCastle,
+            .EndOfWave,
+            .GamePlay,
+            .InitWaveMotionObjects,
+            .StartGame,
+            .StartOfWave,
+            => unreachable,
+        }
+    }
 }
 //@ ;---  state 15 attract mode
 //@ GM.AT0:
@@ -1054,25 +1073,29 @@ fn restart_attract_mode(game_state: *GameState) void {
     //@JSR MS.DRW        ;  credits
     draw_message(0x10, game_state);
 
-    //TODO:
     //@LDA WV.WAR
     //@IFNE
-    //@ LDA #1A
-    //@ JSR MS.DRW        ;  warp message
-    //@ TRAI 0C3 AL.X
-    //@ TRAI 3B AL.Y
-    //@ TRAM SC.HS1+HFSIZ-1 SC.NM
-    //@ TRAM SC.HS2+HFSIZ-1 SC.NM+1
-    //@ TRAM SC.HS3+HFSIZ-1 SC.NM+2
-    //@ JSR SC.NDS        ;  display high score
-    //@ LDA #10            ; wait 40 seconds before
+    if (game_state.wave_enable_warp) {
+        //TODO:
+        unreachable;
+        //@ LDA #1A
+        //@ JSR MS.DRW        ;  warp message
+        //@ TRAI 0C3 AL.X
+        //@ TRAI 3B AL.Y
+        //@ TRAM SC.HS1+HFSIZ-1 SC.NM
+        //@ TRAM SC.HS2+HFSIZ-1 SC.NM+1
+        //@ TRAM SC.HS3+HFSIZ-1 SC.NM+2
+        //@ JSR SC.NDS        ;  display high score
+        //@ LDA #10            ; wait 40 seconds before
+    }
     //@ELSE            ; deactivating warp
-    //@ LDA #1
-
-    //NOTE it is actually 0x200, because the first decrement
-    //@    doesn't affect the high byte
-    game_state.main_loop_delay = 0x200;
-    //@ENDIF
+    else {
+        //@ LDA #1
+        //NOTE it is actually 0x200, because the first decrement
+        //@    doesn't affect the high byte
+        game_state.main_loop_delay = 0x200;
+        //@ENDIF
+    }
     //@STA 1+MN.DEL
 
 }
@@ -2981,8 +3004,7 @@ fn entity_life_mode_calculation(entity: usize, game_state: *GameState) void {
                         //@         TRAI 3 EN.LMD
                         game_state.entity_life_mode[entity] = .Dead;
                         //@         JSR GM.DT0
-                        //TODO
-                        unreachable;
+                        init_death_sequence_state(game_state);
                     }
                     //@        ENDIF
                 }
@@ -3205,7 +3227,7 @@ fn update_player(game_state: *GameState) void {
     }
 
     //@     JSR EN.BRD        ;  read both buttons
-    read_both_buttons(game_state);
+    _ = read_both_buttons(game_state);
 
     //@     LDA ATRACT
     //@     IFEQ
@@ -3316,9 +3338,11 @@ fn update_elevators(game_state: *GameState) void {
 }
 
 //EN.BRD
-fn read_both_buttons(game_state: *GameState) void {
+fn read_both_buttons(game_state: *GameState) usize {
     //TODO
     _ = game_state;
+
+    return 0;
 }
 
 //EN.EWC
@@ -4957,6 +4981,53 @@ const MESSAGE_DATA = [_][]const u8{
         0x23, 1,
         0x24,
     },
+    //@     ;  warp activated, high score
+    //@ MC.M1A:
+    &.{
+        0xB6, 0x28,
+        0,    0x1C,
+    },
+
+    //@ ;  warp instructions
+    //@ MC.M1B:
+    &.{
+        0xB1, 0x38,
+        0x5D, 0,
+        0x37, 0xA4,
+        0,    0x64,
+        0x8A, 0,
+        0x60, 0,
+        0x83, 0x61,
+        0x83,
+    },
+    //@ ;  i give up:  you win
+    //@ MC.M1C:
+    &.{
+        0x20, 0x60,
+        0x9E, 0,
+        0,    0x50,
+        0x9F, 0,
+        0,    0xA1,
+        0x57, 0,
+        0,    0x7A,
+        0x57,
+    },
+
+    //@ ;  crystal castles hall of fame
+    //@ MC.M1D:
+    &.{
+        0x30, 0x30,
+        0x18, 0x19,
+        0x5A, 0x5B,
+        0x5C,
+    },
+    //@ ; enter your initials
+    //@ MC.M1E:
+    &.{
+        0x40, 0xF0,
+        0x5D, 0x5E,
+        0x5F,
+    },
 };
 
 //MS.DRW
@@ -5080,6 +5151,7 @@ fn draw_word(
         //@EQEND
     }
     //@ADAI 6 AL.X
+    position.*[0] += 6;
 }
 
 //RS.INI
@@ -6854,7 +6926,558 @@ fn draw_tunnel(game_state: *GameState) void {
     //TODO
     unreachable;
 }
+//@     ; ------- state 4:  death sequence
+//@ GM.DT0:
+fn init_death_sequence_state(game_state: *GameState) void {
+    //@    TRAI 4 GM.STA
+    game_state.current_state = .DeathSequence;
+    //@     TRAI 60 MN.DEL        ;  init delay
+    game_state.main_loop_delay = 0x60;
+    //@     RTS
+}
+//@ GM.DT:
+fn update_death_sequence_state(game_state: *GameState) void {
+    //@     JSR MN.FRA    ;  delay loop
+    frame_handler(game_state);
+    //@     LDA MN.DEL
+    //@     IFNE
+    if (game_state.main_loop_delay > 0) {
+        //@       DEC MN.DEL
+        game_state.main_loop_delay -= 1;
+        //@       JMP GM.ENL
+        return;
+        //@     ENDIF
+    }
 
+    //@     DEC WV.LIV
+    game_state.lives -= 1;
+    //@     IFEQ        ;  if lost last life,
+    if (game_state.lives == 0) {
+        //@       JSR GM.EG0    ;  end of game
+        init_end_of_game_state(game_state);
+    }
+    //@     ELSE
+    else {
+        //@       JSR GM.DH0    ;  else continue
+        //TODO:
+        unreachable;
+        //@     ENDIF
+    }
+
+    //@     JMP GM.ENL
+}
+//@ ;  state 6  end of game
+//@ GM.EG0:
+fn init_end_of_game_state(game_state: *GameState) void {
+    //@     TRAI 6 GM.STA
+    game_state.current_state = .EndOfGame;
+    //@     LDA ATRACT
+    //@     IFEQ
+    if (game_state.is_in_attract_mode) {
+        //@      JMP 10$
+        //@ 10$:
+        //@     TRAI 01 MN.DEL
+        //@     STA 1+MN.DEL
+        game_state.main_loop_delay = 0x101;
+        //@     RTS
+        return;
+        //@     ENDIF
+    }
+    //TODO:
+    unreachable;
+
+    //@     TRAI 0 TEMP4
+    //@     LDA ST.TIM
+    //@     CMP #70
+    //@     BCS 40$        ;  280 secs = 4 2/3 minutes game time
+    //@     LDA 1+ST.TIM
+    //@     BNE 40$
+    //@     JMP 50$
+    //@ 40$:            ;  which secret warp is it ?
+    //@     LDA WV.XCO
+    //@     CMP #2
+    //@     IFEQ
+    //@      LDX #18
+    //@      BNE 45$
+    //@     ENDIF
+    //@     CMP #4
+    //@     IFEQ
+    //@      LDX #25
+    //@      BNE 45$
+    //@     ENDIF
+    //@     CMP #6
+    //@     IFEQ
+    //@      LDX #2E
+    //@      BNE 45$
+    //@     ENDIF
+    //@     BNE 50$
+    //@ 45$:    STX TEMP4        ;  erase whole screen
+    //@     STX TEMP3        ;  message number
+
+    //@ 50$:
+    //@     LDA WV.EOG
+    //@     IFNE
+    //@      STA TEMP4
+    //@     ENDIF
+
+    //@     LDA TEMP4
+    //@     IFNE
+    //@      JSR GR.SCL    ;  either clear whole screen
+    //@     ELSE
+    //@      JSR GR.MCL    ;  or only part of it
+    //@      JSR AL.MDB
+    //@     ENDIF
+
+    //@     LDA WV.EOG
+    //@     IFEQ        ;  end of crystal castles
+    //@      JMP 20$
+    //@     ENDIF
+
+    //@     LDA #1C
+    //@     JSR MS.DRW    ;  explain last castle
+
+    //@     LDA #10
+    //@     JSR MN.SN1
+
+    //@     TRAI 099 SC.NEL        ;  no more extra lives
+
+    //@     LDA WV.EOG    ;  1 to 6
+    //@     CMP #1
+    //@     IFCC
+    //@     LDA #1
+    //@     ENDIF
+    //@     CMP #6
+    //@     IFCS
+    //@     LDA #6
+    //@     ENDIF
+
+    //@     ADD #2E
+    //@     JSR MS.DRW    ;  comment on player
+
+    //@ ;  extra lives bonus
+    //@     TRAI 80 AL.X
+    //@     STA     AL.Y
+    //@     LDA #0
+    //@     STA SC.NM
+    //@     STA 1+SC.NM
+    //@     STA SC.INC
+    //@     STA 1+SC.INC
+
+    //@     LDA WV.EOG
+    //@     STA 2+SC.INC
+    //@     STA 2+SC.NM
+    //@     JSR SC.NDS
+    //@     JSR SC.UPD
+
+    //@ ;  time bonus
+    //@     TRAI 80 AL.X
+    //@     TRAI 90 AL.Y
+
+    //@     SED
+    //@     LDA #0
+    //@     STA SC.NM
+    //@     STA SC.INC
+
+    //@     SUB ST.TIM
+    //@     STA 1+SC.NM
+    //@     LDA #2
+    //@     SBC 1+ST.TIM
+    //@     IFCS
+    //@      STA 2+SC.NM
+    //@     ELSE
+    //@      LDA #0
+    //@      STA 1+SC.NM
+    //@      STA 2+SC.NM
+    //@     ENDIF
+    //@     CLD
+
+    //@     .REPT 4
+    //@     ASL 1+SC.NM
+    //@     ROL 2+SC.NM
+    //@     .ENDM
+    //@     TRAM 1+SC.NM 1+SC.INC
+    //@     TRAM 2+SC.NM 2+SC.INC
+
+    //@     JSR SC.NDS
+    //@     JSR SC.UPD
+
+    //@     LDA #4
+    //@     STA MN.DEL
+    //@     STA MN.DEL+1
+
+    //@     JMP 30$
+    //@ 20$:
+    //@     ;  out of lives
+
+    //@     LDA #14
+    //@     JSR MS.DRW    ;  game over message
+    //@     JSR MN.P12    ;  player 1-2
+
+    //@     LDA TEMP4
+    //@     IFNE
+    //@      LDA TEMP3
+    //@      JSR MS.DRW    ;  secret warp message
+    //@      LDA #4
+    //@     ELSE
+    //@      LDA #2
+    //@     ENDIF
+    //@     STA 1+MN.DEL
+    //@     STA MN.DEL
+
+    //@     LDA #0A
+    //@     JSR MN.SN1    ;  game over music start
+
+    //@ 30$:
+    //@     JSR EEACC2    ;  end of game accounting
+    //@     JSR WV.WRU    ;  update warp
+    //@     RTS
+    //@ 10$:
+    //@     TRAI 01 MN.DEL
+    //@     STA 1+MN.DEL
+    //@     RTS
+}
+//@ GM.EG:
+fn update_end_of_game_state(game_state: *GameState) void {
+    //@     JSR MN.FRA
+    frame_handler(game_state);
+
+    //@     JSR EN.BRD
+    const buttons = read_both_buttons(game_state);
+    //@     BNE 10$
+    if (buttons == 0) {
+
+        //@     DEC MN.DEL
+        //@     IFEQ
+        //@     DEC 1+MN.DEL
+        //@     IFEQ
+        game_state.main_loop_delay -= 1;
+    }
+    if (buttons != 0 or game_state.main_loop_delay == 0) {
+        //@ 10$:     JSR GM.HF0    ;  high score table
+        init_hall_of_fame_state(game_state);
+        //@     ENDIF
+        //@     ENDIF
+    }
+
+    //@     JMP GM.ENL
+}
+//@ ;  state 13: high scores at end of game, enter initials
+//@ GM.HF0:
+fn init_hall_of_fame_state(game_state: *GameState) void {
+    //@     TRAI 0D GM.STA
+    game_state.current_state = .HallOfFame;
+    //@     TRAI 03 MN.DEL
+    //@     STA 1+MN.DEL
+    game_state.main_loop_delay = 0x303;
+    //@     TRAI 010 TFLASH
+    //NOTE: would be cool to have a flashing trackball, but alas, the Playdate does not have one
+    //@     RTS
+}
+//@ GM.HF:
+fn update_hall_of_fame_state(game_state: *GameState) void {
+    game_state.debug_should_not_yield = false;
+    //@     JSR MN.FRA
+    frame_handler(game_state);
+
+    //@     LDA ATRACT
+    //@     IFNE        ; not in attract mode
+    if (!game_state.is_in_attract_mode) {
+        //TODO:
+        unreachable;
+        //@     JSR SC.HSU    ; update high score
+        //@     LDA SC.NWP    ; if new high score
+        //@     CMP #0FF
+        //@     IFNE
+        //@      LDA TEMP1
+        //@      JSR HF.DRW    ; display high score table
+        //@      JSR SC.INE    ; enter initials
+        //@     ELSE
+        //@      LDA P2.LIV    ;  if no high score and
+        //@      IFEQ        ;  other player dead,  wait
+        //@       DEC MN.DEL
+        //@       IFEQ
+        //@       DEC 1+MN.DEL
+        //@       ENDIF
+        //@       BNE 10$
+        //@      ENDIF
+        //@     ENDIF
+    }
+    //@     ELSE
+    else {
+        //@      LDA #HFSIZ-1        ;  display top 32 scores
+        //@      JSR HF.DRW
+        draw_hall_of_fame(HALL_OF_FAME_SIZE - 1, game_state);
+        //@     ENDIF
+    }
+
+    //@      LDA 2+SC.SCO
+    //@      CMP #70
+    //@      IFCS
+    if (game_state.score >= 0x700000) {
+        //@       JSR GM.FL0
+        //TODO:
+        unreachable;
+    }
+    //@      ELSE
+    else {
+        //@       JSR GM.BE0
+        //TODO:
+        unreachable;
+        //@      ENDIF
+    }
+
+    //@ 10$:
+    //@     TRAI 0FF TFLASH
+    //NOTE: would be cool to have a flashing trackball, but alas, the Playdate does not have one
+    //@     JMP GM.ENL
+}
+//@ ;-----------------------------
+//@ ;  hall of fame drawing
+//@ ;  (A) has index of upper left score
+//@ HF.DRW:
+fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void {
+
+    //@     STA TEMP4
+    var temp4 = upper_left_score_index;
+    //@     SUB #20            ; display  32 entries
+    //@     STA TEMP4+1
+    const temp4_1 = upper_left_score_index - 0x20;
+
+    //@     JSR GR.SCL
+    clear_screen(game_state);
+    //@     LDA #1D
+    //@     JSR MS.DRW        ;  hall of fame title
+    draw_message(0x1D, game_state);
+
+    //@     HF.YOF=48
+    const hf_yof = 0x48;
+    //@     TRAI HF.YOF AL.Y
+    var y: Dimension = hf_yof;
+
+    //@     TRAI 0 TEMP5
+    var temp5: isize = 0;
+    //@     STA AT.PRT
+    //@     BEGIN
+    while (temp4_1 != temp4) {
+        //@     LDA TEMP5
+        //@     AND #080
+        //@     ADD #2*6
+        //@     STA AL.X
+        var x = (temp5 & 0x80) + 12;
+
+        //@     LDA #HFSIZ
+        //@     SUB TEMP4
+        const rank: isize = @intCast(HALL_OF_FAME_SIZE - temp4);
+        //@     JSR AL.CNV
+        //NOTE: this converts to hex to decimal, but no need to do that
+
+        //@     STA SC.NM
+        //@     STX 1+SC.NM
+        //@     TRAI 0 2+SC.NM
+        //@     JSR SC.NDS        ;  rank
+        draw_6_digit_number(
+            rank,
+            .{ x, y },
+            game_state,
+        );
+
+        //@     LDA TEMP5
+        //@     AND #080
+        //@     ADD #6*6
+        //@     STA AL.X
+        x = (temp5 & 0x80) + 6 * 6;
+
+        //@     LDX TEMP4
+        //@     LDA SC.HS1(X)
+        //@     STA SC.NM
+        const entry = game_state.scoreboard.entries[temp4];
+        const score = entry.score;
+
+        //@     LDA SC.HS2(X)
+        //@     STA 1+SC.NM
+        //@     LDA SC.HS3(X)
+        //@     STA 2+SC.NM
+        //@     JSR SC.NDS
+        draw_6_digit_number(score, .{ x, y }, game_state);
+
+        //@ ;  initials
+        //@     LDA TEMP5
+        //@     AND #080
+        //@     ADD #0D*6
+        //@     STA AL.X
+        x = (temp5 & 0x80) + 0xD * 6;
+
+        //@     LDX TEMP4
+        //@     TRAM   SC.HI1(X) AL.DIG
+        //@     JSR AL.DRW
+        add_draw_character_command(
+            entry.name.bytes[0],
+            .White,
+            .{ x, y },
+            game_state,
+        );
+        //@     ADAI 6 AL.X
+        x += 6;
+        //@     LDX TEMP4
+        //@     TRAM   SC.HI2(X) AL.DIG
+        //@     JSR AL.DRW
+        add_draw_character_command(
+            entry.name.bytes[1],
+            .White,
+            .{ x, y },
+            game_state,
+        );
+        //@     ADAI 6 AL.X
+        x += 6;
+        //@     LDX TEMP4
+        //@     TRAM   SC.HI3(X) AL.DIG
+        //@     JSR AL.DRW
+        add_draw_character_command(
+            entry.name.bytes[2],
+            .White,
+            .{ x, y },
+            game_state,
+        );
+
+        //@     ADAI 8 AL.Y
+        y += 8;
+        //@     LDA TEMP5
+        //@     CMP #78
+        //@     IFEQ
+        if (temp5 == 0x78) {
+            //@     TRAI HF.YOF AL.Y
+            y = hf_yof;
+            //@     ENDIF
+        }
+        //@     ADAI 8 TEMP5
+        temp5 += 8;
+        //@     DEC TEMP4
+        temp4 -= 1;
+        //@     LDA TEMP4
+        //@     CMP TEMP4+1
+        //NOTE: handled in the while condition
+        //@     EQEND
+    }
+
+    //@     LDA ATRACT
+    //@     IFEQ
+    if (game_state.is_in_attract_mode) {
+        //@      TRAI 4 1+MN.DEL
+        game_state.main_loop_delay = 0x400 | (game_state.main_loop_delay & 0xFF);
+        {
+            //TODO this seems to read some vblank registers we don't have...
+            //@      LDA HW.ST1
+            //@      AND #MA.ST1
+            //@      IFEQ
+            //@      LDA HW.ST2
+            //@      AND #MA.ST2
+            //@      IFEQ
+            //@       JSR EEACC
+            //@      ENDIF
+            //@      ENDIF
+        }
+
+        //@      BEGIN
+        while ((game_state.main_loop_delay) >> 8 != 0) {
+            //@       JSR MN.FRA
+            frame_handler(game_state);
+            //@       LDA $$CRDT
+            //@       BNE 30$
+            if (game_state.number_of_credits > 0) {
+                break;
+            }
+            //@       DEC MN.DEL
+            //@       IFEQ
+            //@       DEC 1+MN.DEL
+            //@       ENDIF
+            game_state.main_loop_delay -= 1;
+            //@      LDA 1+MN.DEL
+            //@      EQEND
+        }
+        //@  30$:
+        //@     ENDIF
+    }
+    //@     RTS
+}
+//@ ;------------------------
+//@ ; routine to clear screen
+//@ GR.SCL:
+fn clear_screen(game_state: *GameState) void {
+    //@     JSR GR.MCL    ;  clear motion objects
+    clear_motion_objects(game_state);
+
+    //@ ;  bit-map too
+    //@ ;    LDY #0    ;  GR.MCL set Y to 0
+    //@     STY HW.AY
+    //@     STY TEMP1
+    var temp1: u8 = 0;
+    //@      DEY
+    //@     STY HW.YIN
+
+    //@     LDA #00F
+    //@ 5$:
+    while (true) {
+        //@     LDY #40
+        var i: isize = 0x40;
+        //@     LDX TEMP1
+        //@     STX XB
+        const x: Dimension = temp1;
+        var y: Dimension = 0xFF;
+        //@ 10$:
+        while (true) {
+            //@     .REPT 4
+            for (0..4) |_| {
+                //@     STA VB
+                add_draw_command(.{
+                    .shape = .Pixel,
+                    .position = .{ x, y },
+                    .color = .Black,
+                }, game_state);
+                y -= 1;
+                //@     .ENDM
+            }
+            //@     DEY
+            i -= 1;
+            //@     BNE 10$
+            if (i == 0) {
+                break;
+            }
+        }
+        //@     JSR MN.HOU    ;  housekeeping
+        //@     DEC TEMP1
+        temp1 -%= 1;
+        //@     BNE 5$
+        if (temp1 == 0) {
+            break;
+        }
+    }
+
+    //@     TRAI 0FF HW.AY
+    //@     RTS
+}
+//@ ;-------------------------
+//@ ;  hide all motion objects
+//@ GR.MCL:
+fn clear_motion_objects(game_state: *GameState) void {
+    for (&game_state.motion_objects) |*mo| {
+        mo.* = .{};
+    }
+    //@     TR16AI MT.BU1 MT.PTR
+    //@     JSR GR.MC1
+    //@     TR16AI MT.BU0 MT.PTR
+    //@     JSR GR.MC1
+    //@ ; (Y)=0
+    //@     RTS
+    //@ GR.MC1:
+    //@     LDY #28*4
+    //@     BEGIN
+    //@     DEY
+    //@      TRAI 0F0 @MT.PTR(Y)
+    //@      TYA
+    //@     EQEND
+    //@ ; (Y)=0
+    //@     RTS
+}
 fn next_frame(game_state: *GameState) void {
     if (game_state.debug_should_not_yield) {
         return;
@@ -6907,13 +7530,16 @@ fn add_draw_command(
     game_state: *GameState,
 ) void {
     const position = command.position;
-    toolbox.assert(
-        !(position[0] < 0 or position[0] >= SCREEN_WIDTH or
-            position[1] - Y_COORDINATE_OFFSET < 0 or
-            position[1] - Y_COORDINATE_OFFSET >= SCREEN_HEIGHT),
-        "draw commmand out of bounds!",
-        .{},
-    );
+    if ((position[0] < 0 or position[0] >= SCREEN_WIDTH or
+        position[1] - Y_COORDINATE_OFFSET < 0 or
+        position[1] - Y_COORDINATE_OFFSET >= SCREEN_HEIGHT))
+    {
+        toolbox.println(
+            "draw commmand out of bounds: {}.  Discarding...",
+            .{position},
+        );
+        return;
+    }
     toolbox.assert(
         command.shape != .Character or command.character >= ' ',
         "Bad character value: {}",
@@ -6926,8 +7552,7 @@ fn add_draw_command(
         command_copy,
     );
 
-    //NOTE: 200 is arbitrarily chosen
-    const MAX_DRAW_COMMANDS_PER_FRAME = 200;
+    const MAX_DRAW_COMMANDS_PER_FRAME = game_state.draw_command_queue.data.len - 1;
     game_state.number_of_draw_commands_this_frame += 1;
 
     if (game_state.number_of_draw_commands_this_frame >=

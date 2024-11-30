@@ -1,3 +1,4 @@
+- Fix long delay between death and scoreboard
 - Fix assert firing when VALIDATE_AGAINST_ARCADE is true
     - Looks like the crystal ball is moving a tiny bit when it shouldn't, but seems to not affect visuals
     - Maybe we can put this on the back burner now...
