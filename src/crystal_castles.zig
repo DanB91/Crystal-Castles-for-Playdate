@@ -616,6 +616,7 @@ const DrawCommand = struct {
         Character,
         ScreenErase,
         Pixel,
+        ClearEntireScreen,
     };
 };
 
@@ -641,7 +642,7 @@ pub const GameState = struct {
     rng_state: toolbox.RandomState,
 
     current_state: enum {
-        DrawBackgroundAndCastle, //GM.IN -- GM.STA is set to 0
+        Initial, //GM.IN -- GM.STA is set to 0
         StartGame, //GM.ST -- GM.STA is set to 1
         StartOfWave, //GM.SW -- GM.STA is set to 2
         GamePlay, //GM.GP -- GM.STA is set to 3
@@ -653,7 +654,7 @@ pub const GameState = struct {
         HallOfFame, //GM.HF -- GM.STA is set to 0xD
         ExplainationBoard, //GM.BE is set to 0xE
         AttractModeMainLoop, //GM.AT -- GM.STA is set to 0xF
-    } = .DrawBackgroundAndCastle,
+    } = .Initial,
 
     is_in_attract_mode: bool = false, //ATRACT
     attract_mode_player_position_index: usize = 0, //WV.ATP
@@ -671,7 +672,6 @@ pub const GameState = struct {
     wave_long_term_difficulty: isize = 0, //WV.DF2
     wave_time: isize = 0, //WV.TIM
     wave_enable_warp: bool = false, //WV.WAR
-    wave_attract_mode_pointer: isize = 0, //WV.ATP
 
     wave_scroll_flag: enum { NoScroll, Right, Left, Up } = .NoScroll, //WV.SCF
 
@@ -802,7 +802,7 @@ pub const GameState = struct {
 
     scoreboard: Scoreboard = .{},
 
-    debug_should_not_yield: bool = false, //true,
+    debug_should_not_yield: bool = true,
 
     expected_test_data: []const ExpectedTestData = z([]const ExpectedTestData),
 
@@ -883,12 +883,31 @@ fn reset(game_state: *GameState) void {
     initialize_wave_data(game_state);
 }
 pub fn update(game_state: *GameState) void {
+    while (true) {
+        switch (game_state.current_state) {
+            .Initial => init_attract_mode(game_state),
+            .AttractModeMainLoop => update_attract_mode_state(game_state),
+            .InitWaveMotionObjects => update_wave_motion_objects_state(game_state),
+            .StartGame => update_start_game_state(game_state),
+            .StartOfWave => update_start_of_wave_state(game_state),
+            .GamePlay => update_game_play_state(game_state),
+            .DeathSequence => update_death_sequence_state(game_state),
+            .EndOfGame => update_end_of_game_state(game_state),
+            .HallOfFame => update_hall_of_fame_state(game_state),
+            .ExplainationBoard => update_explaination_board_state(game_state),
+
+            .EndOfWave => unreachable,
+        }
+    }
+}
+fn draw_background(game_state: *GameState) void {
     //NOTE: this differentiates from the original code since instead of drawing squares,
     //      we just draw the background with a swipe effect
+    game_state.background_clip_y = 0;
     while (true) {
         const BACKGROUND_ANIMATION_MS_PER_SCANLINE = 720 / SCREEN_HEIGHT;
         if (game_state.background_clip_y >= SCREEN_HEIGHT) {
-            initialize_castle(game_state);
+            initialize_city(game_state);
             next_frame(game_state);
             break;
         }
@@ -905,43 +924,30 @@ pub fn update(game_state: *GameState) void {
         }
         next_frame(game_state);
     }
-
-    init_castle(game_state);
-
-    while (true) {
-        draw_castle_row(game_state);
-        game_state.castle_row_count -= 1;
-        if (game_state.castle_row_count < 0) {
-            break;
-        }
-        advance_castle_row(game_state);
-    }
-
-    init_attract_mode(game_state);
-
-    while (true) {
-        switch (game_state.current_state) {
-            .DeathSequence => update_death_sequence_state(game_state),
-            .EndOfGame => update_end_of_game_state(game_state),
-            .HallOfFame => update_hall_of_fame_state(game_state),
-            .ExplainationBoard => update_explaination_board_state(game_state),
-            .AttractModeMainLoop => update_attract_mode_state(game_state),
-            .StartGame => update_start_game_state(game_state),
-            .GamePlay => update_game_play_state(game_state),
-            .StartOfWave => update_start_of_wave_state(game_state),
-            .InitWaveMotionObjects => update_wave_motion_objects_state(game_state),
-
-            .DrawBackgroundAndCastle,
-            .EndOfWave,
-            => unreachable,
-        }
-    }
 }
 //@ ;---  state 15 attract mode
 //@ GM.AT0:
 fn init_attract_mode(game_state: *GameState) void {
     //@ TRAI 0F GM.STA
     game_state.current_state = .AttractModeMainLoop;
+
+    //NOTE: don't think we need these
+    //@     TRAI 20 TFLASH
+    //@     JSR EECHKT        ; check up on EEROM
+    //@ ;  draw wave 1 playfield
+    //@     TRAI 0 ST.PLY        ; no game play
+    //@     STA PL.UP        ; use hs inits, not p2
+
+    //@     JSR WV.INI        ; init colors, wave number
+    initialize_wave_data(game_state);
+    //@     JSR WV.BDR        ; draw background
+    draw_background(game_state);
+    //@     JSR GR.MCL        ; clear mot obj
+    clear_motion_objects(game_state);
+    //@     JSR CT.INI        ; init city+elevators
+    initialize_city(game_state);
+    //@     JSR CT.DRW        ; draw city
+    draw_city(game_state);
 
     //@JSR AL.BER
     erase_board(game_state);
@@ -3634,9 +3640,10 @@ fn start_of_wave(game_state: *GameState) void {
     //@    ORA WV.YCO
     //@    BEQ 10$
     if (game_state.wave_xco != 0 or game_state.wave_yco != 0) {
-        //TODO
         //@    JSR CT.INI        ; init city+elevators
+        initialize_city(game_state);
         //@    JSR CT.DRW        ; draw city
+        draw_city(game_state);
     }
 
     //@10$:
@@ -5218,6 +5225,9 @@ fn update_current_wave_and_difficulty(game_state: *GameState) void {
     //@    STA CT.HR1
     //@    STA CT.HR2
     //@    STA CT.HR3
+    game_state.castle_region_1 = 0;
+    game_state.castle_region_2 = 0;
+    game_state.castle_region_3 = 0;
 
     //@    LDX #0FF
 
@@ -5341,7 +5351,7 @@ fn update_colors(game_state: *GameState) void {
 }
 
 //CT.INI
-fn initialize_castle(game_state: *GameState) void {
+fn initialize_city(game_state: *GameState) void {
     const wave_data = &game_state.current_wave_data;
 
     //should be equvalent to WV.OFF
@@ -5573,8 +5583,9 @@ fn advance_castle_row(game_state: *GameState) void {
     //@STA CR.VST
     game_state.castle_row_position += .{ -4, 4 };
 }
+
 //CT.DRW
-fn init_castle(game_state: *GameState) void {
+fn draw_city(game_state: *GameState) void {
     //@;  traverse through rows
     //@TR16AI CTRAM CT.ACL
     game_state.castle_acl = 0;
@@ -5586,6 +5597,15 @@ fn init_castle(game_state: *GameState) void {
     game_state.castle_all = 0 + 0x13 + 0x3; //0x16
 
     initialize_castle_row(game_state);
+
+    while (true) {
+        draw_castle_row(game_state);
+        game_state.castle_row_count -= 1;
+        if (game_state.castle_row_count < 0) {
+            break;
+        }
+        advance_castle_row(game_state);
+    }
 }
 
 //CR.DRW
@@ -6006,7 +6026,7 @@ fn update_wave_motion_objects_state(game_state: *GameState) void {
         //@     STA 1+WV.TIM
         game_state.wave_time = 0;
         //@     STA WV.ATP
-        game_state.wave_attract_mode_pointer = 0;
+        game_state.attract_mode_player_position_index = 0;
         //@     STA WV.CIN        ;  color inhibit
         game_state.prevent_color_transfer = true;
         //@     RTS
@@ -6515,7 +6535,6 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
 //@ ;---  state 14 explanation board
 //@ GM.BE0:
 fn init_explaination_board_state(game_state: *GameState) void {
-    game_state.debug_should_not_yield = false;
     //@     TRAI 0E GM.STA
     game_state.current_state = .ExplainationBoard;
     //@     LDA $$CRDT
@@ -6574,6 +6593,7 @@ fn update_explaination_board_state(game_state: *GameState) void {
         //@      JSR GR.SCL
         clear_screen(game_state);
         //@      JSR GM.AT0
+        game_state.debug_should_not_yield = false;
         init_attract_mode(game_state);
         //@     ENDIF
         //@     ENDIF
@@ -7647,6 +7667,21 @@ fn draw_tunnel(game_state: *GameState) void {
 fn clear_screen(game_state: *GameState) void {
     //@     JSR GR.MCL    ;  clear motion objects
     clear_motion_objects(game_state);
+    add_draw_command(.{
+        .shape = .ClearEntireScreen,
+
+        //unused
+        .position = undefined,
+        .color = undefined,
+    }, game_state);
+    next_frame(game_state);
+}
+//@ ;------------------------
+//@ ; routine to clear screen
+//@ GR.SCL:
+fn clear_screen_old(game_state: *GameState) void {
+    //@     JSR GR.MCL    ;  clear motion objects
+    clear_motion_objects(game_state);
 
     //@ ;  bit-map too
     //@ ;    LDY #0    ;  GR.MCL set Y to 0
@@ -7780,7 +7815,7 @@ fn add_draw_command(
         flush_draw_command_queue(game_state);
     }
     const position = command.position;
-    if ((position[0] < 0 or position[0] >= SCREEN_WIDTH or
+    if (command.shape != .ClearEntireScreen and (position[0] < 0 or position[0] >= SCREEN_WIDTH or
         position[1] - Y_COORDINATE_OFFSET < 0 or
         position[1] - Y_COORDINATE_OFFSET >= SCREEN_HEIGHT))
     {

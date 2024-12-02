@@ -1,3 +1,4 @@
+- Change DrawCommand to tagged union
 - Fix long delay between death and scoreboard
 - Fix assert firing when VALIDATE_AGAINST_ARCADE is true
     - Looks like the crystal ball is moving a tiny bit when it shouldn't, but seems to not affect visuals
@@ -18,3 +19,4 @@ X Enemy is too fast
 X When the player turns left, the sprite doesn't change as it should
 X Missing movement of enemy
 X Score has trailing zeroes
+X init_attract_mode_state() (GM.AT0) is not complete.  Complete it make sure its called correctly on game initializatin

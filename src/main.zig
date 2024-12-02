@@ -130,19 +130,23 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
         pdapi.set_draw_offset(game_offset_x, game_offset_y);
         defer pdapi.set_draw_offset(0, 0);
 
-        pdapi.set_clip_rect(
-            0,
-            0,
-            cc.SCREEN_WIDTH,
-            @intCast(game_state.background_clip_y),
-        );
-        defer pdapi.clear_clip_rect();
-        pdapi.draw_bitmap(
-            background_image,
-            0,
-            0,
-            .BitmapUnflipped,
-        );
+        pdapi.fill_rect(0, 0, cc.SCREEN_WIDTH, cc.SCREEN_HEIGHT, pdapi.solid_color_to_color(.ColorBlack));
+
+        {
+            pdapi.set_clip_rect(
+                0,
+                0,
+                cc.SCREEN_WIDTH,
+                @intCast(game_state.background_clip_y),
+            );
+            defer pdapi.clear_clip_rect();
+            pdapi.draw_bitmap(
+                background_image,
+                0,
+                0,
+                .BitmapUnflipped,
+            );
+        }
         pdapi.draw_bitmap(platform_state.castle_bitmap, 0, 0, .BitmapUnflipped);
 
         //draw sprites, aka motion objects
@@ -174,9 +178,9 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     }
 
     profiler.end_profiler();
-    if (pdapi.is_button_down(pdapi.BUTTON_B)) {
-        draw_debug_and_profiler_hud(platform_state, command_count);
-    }
+    // if (pdapi.is_button_down(pdapi.BUTTON_B)) {
+    draw_debug_and_profiler_hud(platform_state, command_count);
+    // }
     //draw fps
     {
         pdapi.draw_fps(pdapi.LCD_COLUMNS - 20, 0);
@@ -233,6 +237,11 @@ pub fn update_castle_bitmap(
                     castle_bitmap_data,
                 );
             },
+            .ClearEntireScreen => {
+                game_state.background_clip_y = 0;
+                // @memset(castle_bitmap_data.data, 0);
+                @memset(castle_bitmap_data.mask.?, 0);
+            },
             .None => unreachable,
         }
     }
@@ -274,22 +283,8 @@ fn draw_debug_and_profiler_hud(
     //player position
     {
         F.add_line(
-            "x: {X}, y: {X}",
-            .{ game_state.entity_position[0][0], game_state.entity_position[0][1] },
-            &lines,
-            &background_width,
-            arena,
-        );
-        F.add_line(
-            "entity 3 fine x: {X}, fine y: {X}",
-            .{ game_state.entity_fine_position[3][0], game_state.entity_fine_position[3][1] },
-            &lines,
-            &background_width,
-            arena,
-        );
-        F.add_line(
-            "time: {X}",
-            .{game_state.wave_time},
+            "main loop delay: {X}",
+            .{game_state.main_loop_delay},
             &lines,
             &background_width,
             arena,
