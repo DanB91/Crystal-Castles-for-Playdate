@@ -802,7 +802,7 @@ pub const GameState = struct {
 
     scoreboard: Scoreboard = .{},
 
-    debug_should_not_yield: bool = true,
+    debug_should_not_yield: bool = false, //true,
 
     expected_test_data: []const ExpectedTestData = z([]const ExpectedTestData),
 
@@ -6113,7 +6113,8 @@ fn init_end_of_game_state(game_state: *GameState) void {
         //@ 10$:
         //@     TRAI 01 MN.DEL
         //@     STA 1+MN.DEL
-        game_state.main_loop_delay = 0x101;
+        //NOTE: due to the way main_loop_delay (MN.DEL) is checked, it should always be 0x100 less than what the code says
+        game_state.main_loop_delay = 0x1;
         //@     RTS
         return;
         //@     ENDIF
@@ -6303,7 +6304,8 @@ fn init_hall_of_fame_state(game_state: *GameState) void {
     game_state.current_state = .HallOfFame;
     //@     TRAI 03 MN.DEL
     //@     STA 1+MN.DEL
-    game_state.main_loop_delay = 0x303;
+    //NOTE: due to the way main_loop_delay (MN.DEL) is checked, it should always be 0x100 less than what the code says
+    game_state.main_loop_delay = 0x203;
     //@     TRAI 010 TFLASH
     //NOTE: would be cool to have a flashing trackball, but alas, the Playdate does not have one
     //@     RTS
@@ -6496,7 +6498,8 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
     //@     IFEQ
     if (game_state.is_in_attract_mode) {
         //@      TRAI 4 1+MN.DEL
-        game_state.main_loop_delay = 0x400 | (game_state.main_loop_delay & 0xFF);
+        //NOTE: due to the way main_loop_delay (MN.DEL) is checked, it should always be 0x100 less than what the code says
+        game_state.main_loop_delay = 0x300 | (game_state.main_loop_delay & 0xFF);
         {
             //TODO this seems to read some vblank registers we don't have...
             //@      LDA HW.ST1
@@ -6558,13 +6561,15 @@ fn init_explaination_board_state(game_state: *GameState) void {
     //@     PLEND
     @memset(game_state.entity_animation[0..8], 0);
     //@     TRAI 06 1+MN.DEL
-    game_state.main_loop_delay = 0x600 | (game_state.main_loop_delay & 0xFF);
+    //NOTE: due to the way main_loop_delay (MN.DEL) is checked, it should always be 0x100 less than what the code says
+    game_state.main_loop_delay = 0x500 | (game_state.main_loop_delay & 0xFF);
 
     //@     RTS
 }
 
 //@ GM.BE:
 fn update_explaination_board_state(game_state: *GameState) void {
+    game_state.debug_should_not_yield = false;
     //@     JSR MN.FRA
     frame_handler(game_state);
 
@@ -6593,7 +6598,6 @@ fn update_explaination_board_state(game_state: *GameState) void {
         //@      JSR GR.SCL
         clear_screen(game_state);
         //@      JSR GM.AT0
-        game_state.debug_should_not_yield = false;
         init_attract_mode(game_state);
         //@     ENDIF
         //@     ENDIF
@@ -6651,7 +6655,7 @@ fn draw_explaination_board(game_state: *GameState) void {
             //@        CMP #10
             //@        IFPL
             var x = (game_state.frame & 0x3F) >> 1;
-            if (x == 0x10) {
+            if (x >= 0x10) {
                 //@         JSR NEGATE
                 //@         ADD #20
                 x = -x + 0x20;

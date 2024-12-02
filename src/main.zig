@@ -178,9 +178,9 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     }
 
     profiler.end_profiler();
-    // if (pdapi.is_button_down(pdapi.BUTTON_B)) {
-    draw_debug_and_profiler_hud(platform_state, command_count);
-    // }
+    if (pdapi.is_button_down(pdapi.BUTTON_B)) {
+        draw_debug_and_profiler_hud(platform_state, command_count);
+    }
     //draw fps
     {
         pdapi.draw_fps(pdapi.LCD_COLUMNS - 20, 0);
@@ -239,7 +239,6 @@ pub fn update_castle_bitmap(
             },
             .ClearEntireScreen => {
                 game_state.background_clip_y = 0;
-                // @memset(castle_bitmap_data.data, 0);
                 @memset(castle_bitmap_data.mask.?, 0);
             },
             .None => unreachable,
