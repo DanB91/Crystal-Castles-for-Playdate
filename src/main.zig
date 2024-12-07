@@ -91,8 +91,23 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     platform_state.last_frame_time = now;
 
     {
+        const is_running = pdapi.is_button_down(pdapi.BUTTON_B);
+        const delta: isize = if (is_running) 5 else 2;
         profiler.begin("cc.update");
         game_state.dt = dt;
+        game_state.button_pressed = pdapi.is_button_pressed(pdapi.BUTTON_A);
+        if (pdapi.is_button_down(pdapi.BUTTON_RIGHT)) {
+            game_state.trackball_position[0] += delta;
+        }
+        if (pdapi.is_button_down(pdapi.BUTTON_LEFT)) {
+            game_state.trackball_position[0] -= delta;
+        }
+        if (pdapi.is_button_down(pdapi.BUTTON_UP)) {
+            game_state.trackball_position[1] += delta;
+        }
+        if (pdapi.is_button_down(pdapi.BUTTON_DOWN)) {
+            game_state.trackball_position[1] -= delta;
+        }
         fiber.yield();
         profiler.end();
     }
@@ -109,11 +124,12 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
         update_castle_bitmap(platform_state);
         profiler.end();
     }
-    // }
 
-    // if (pdapi.is_button_pressed(pdapi.BUTTON_A)) {
-    //     update_castle_bitmap(dt, platform_state);
-    // }
+    if (pdapi.is_button_pressed(pdapi.BUTTON_B)) {
+        if (game_state.is_in_attract_mode) {
+            game_state.number_of_credits += 1;
+        }
+    }
     const background_image = platform_state.background_image;
 
     pdapi.clear_screen(pdapi.LCDSolidColor.ColorWhite);
@@ -178,7 +194,7 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     }
 
     profiler.end_profiler();
-    if (pdapi.is_button_down(pdapi.BUTTON_B)) {
+    if (false) { //pdapi.is_button_down(pdapi.BUTTON_B)) {
         draw_debug_and_profiler_hud(platform_state, command_count);
     }
     //draw fps
@@ -469,19 +485,8 @@ fn draw_character(
     //      SUB #4A
     //     ENDIF
 
-    var bitmap_index_start: usize = 0;
-    var bitmap_set: []const u8 = undefined;
-    switch (char) {
-        '0'...'9' => {
-            bitmap_index_start = @intCast((char - '0') * cc.CHARACTER_BITMAP_WIDTH);
-            bitmap_set = &cc.NUMBER_BITMAPS;
-        },
-        'A'...'A' + cc.LETTER_BITMAPS.len => {
-            bitmap_index_start = @intCast((char - 'A') * cc.CHARACTER_BITMAP_WIDTH);
-            bitmap_set = &cc.LETTER_BITMAPS;
-        },
-        else => toolbox.panic("Trying to draw nvalid character: {X}", .{char}),
-    }
+    const bitmap_index_start: usize = @intCast(char * cc.CHARACTER_BITMAP_WIDTH);
+    const bitmap_set = cc.CHARACTER_BITMAPS;
 
     //     JSR AL.5OT
 

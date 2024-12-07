@@ -22,8 +22,8 @@ pub const Y_COORDINATE_OFFSET = 0x18;
 pub const CHARACTER_BITMAP_HEIGHT = 5;
 pub const CHARACTER_BITMAP_WIDTH = 5;
 
-//@AL.55D:        ;  5x5 digits
-pub const NUMBER_BITMAPS = [_]u8{
+pub const CHARACTER_BITMAPS = [_]u8{
+    //@AL.55D:        ;  5x5 digits
     0b11111000,
     0b11111000,
     0b10001000,
@@ -83,9 +83,8 @@ pub const NUMBER_BITMAPS = [_]u8{
     0b00101000,
     0b11111000,
     0b11111000,
-};
 
-pub const LETTER_BITMAPS = [_]u8{
+    //*****letter bitmaps****
     0b11111000,
     0b11111000,
     0b00101000,
@@ -591,6 +590,8 @@ const SWARM_ENTITY = 1;
 const PLAYFIELD_WIDTH = 22;
 const PLAYFIELD_HEIGHT = 22;
 
+const STARTING_LIVES = 3;
+
 pub const Dimension = isize;
 pub const V2 = @Vector(2, Dimension);
 pub const ZV2 = V2{ 0, 0 };
@@ -629,7 +630,10 @@ pub const MotionObject = struct {
 
 pub const GameState = struct {
     //input from platform layer:
-    dt: toolbox.Duration,
+    trackball_position: V2 = ZV2,
+    button_pressed: bool = false,
+    dt: toolbox.Duration = .{},
+    number_of_credits: isize = 0, //$$CRDT or $CNCT
 
     //output to platform layer:
     motion_objects: [MAX_NUMBER_OF_ENTITIES * MOTION_OBJECTS_PER_ENTITY]MotionObject =
@@ -650,6 +654,7 @@ pub const GameState = struct {
         EndOfWave, //GM.EW -- GM.STA is set to 5
         EndOfGame, //GM.EG -- GM.STA is set to 6
 
+        DeathHandler, //GM.DH -- GM.STA is set to 9
         InitWaveMotionObjects, //GM.WO -- GM.STA is set to 0xA
         HallOfFame, //GM.HF -- GM.STA is set to 0xD
         ExplainationBoard, //GM.BE is set to 0xE
@@ -671,7 +676,9 @@ pub const GameState = struct {
     wave_short_term_difficulty: isize = 0, //WV.DF1
     wave_long_term_difficulty: isize = 0, //WV.DF2
     wave_time: isize = 0, //WV.TIM
-    wave_enable_warp: bool = false, //WV.WAR
+    wave_warp: isize = 0, //WV.WAR
+    wave_message_flag: bool = false, //WV.MFL
+    wave_message_number: isize = 0, //WV.MNM
 
     wave_scroll_flag: enum { NoScroll, Right, Left, Up } = .NoScroll, //WV.SCF
 
@@ -793,10 +800,11 @@ pub const GameState = struct {
     score: isize = 0, //P1.SCO or SC.SCO
 
     frame: isize = 1, //FRAME
-    number_of_credits: isize = 0, //$$CRDT or $CNCT
-    current_wave_data: [WAVE_DATA_SIZE]u8 = undefined, //CTRAM,
+    current_wave_data: [WAVE_DATA_SIZE]u8 = undefined, //CTRAM
 
     last_trackball_position: V2 = ZV2, //TR.I and TR.J
+    trackball_delta: V2 = ZV2, //CE.XD and CE.YD
+    jump_delta: V2 = ZV2, //EN.JPX and EN.JPY
 
     show_easter_egg_count: isize = 0,
 
@@ -864,7 +872,7 @@ pub fn init(game_state: *GameState, global_arena: *toolbox.Arena) void {
     reset(game_state);
 }
 
-fn reset(game_state: *GameState) void {
+pub fn reset(game_state: *GameState) void {
     const draw_line_command_queue = game_state.draw_command_queue;
     const rand = toolbox.init_random(@bitCast(toolbox.now().microseconds()));
     const expected_test_data =
@@ -875,6 +883,7 @@ fn reset(game_state: *GameState) void {
         .draw_command_queue = draw_line_command_queue,
         .rng_state = rand,
         .expected_test_data = expected_test_data,
+        .button_pressed = false,
     };
     game_state.draw_command_queue.clear();
 
@@ -895,15 +904,21 @@ pub fn update(game_state: *GameState) void {
             .EndOfGame => update_end_of_game_state(game_state),
             .HallOfFame => update_hall_of_fame_state(game_state),
             .ExplainationBoard => update_explaination_board_state(game_state),
-
-            .EndOfWave => unreachable,
+            .DeathHandler => update_death_handler_state(game_state),
+            .EndOfWave => update_end_of_wave_state(game_state),
         }
     }
 }
+//WV.BRD
 fn draw_background(game_state: *GameState) void {
     //NOTE: this differentiates from the original code since instead of drawing squares,
     //      we just draw the background with a swipe effect
     game_state.background_clip_y = 0;
+    add_draw_command(.{
+        .shape = .ClearEntireScreen,
+        .color = undefined,
+        .position = undefined,
+    }, game_state);
     while (true) {
         const BACKGROUND_ANIMATION_MS_PER_SCANLINE = 720 / SCREEN_HEIGHT;
         if (game_state.background_clip_y >= SCREEN_HEIGHT) {
@@ -953,11 +968,11 @@ fn init_attract_mode(game_state: *GameState) void {
     erase_board(game_state);
     //@LDA #10
     //@JSR MS.DRW        ;  credits
-    draw_message(0x10, game_state);
+    _ = draw_message(0x10, game_state);
 
     //@LDA WV.WAR
     //@IFNE
-    if (game_state.wave_enable_warp) {
+    if (game_state.wave_warp != 0) {
         //TODO:
         unreachable;
         //@ LDA #1A
@@ -1009,9 +1024,30 @@ fn update_entities(game_state: *GameState) void {
 
     //@ ;  trackball update
     {
-        //TODO: player input
-
         //@     JSR TR.DEL
+        //@ ;---------------------------------------
+        //@ ;  trackball deltas
+        //@ TR.DEL:
+        //@     LDA HW.FLV
+        //@     EOR #0FF
+        //@     AND #0FE
+        //@     TAY
+        //@     LDA HW.T2H(Y)
+
+        //@     TAX
+        //@     SUB TR.I
+        //@     STA TR.XD
+        //@     STX TR.I
+
+        //@     LDA HW.T2V(Y)
+        //@     TAX
+        //@     SUB TR.J
+        //@     STA TR.YD
+        //@     STX TR.J
+        var trackball_delta = game_state.trackball_position - game_state.last_trackball_position;
+        game_state.last_trackball_position = game_state.trackball_position;
+
+        //@     RTS
 
         //@ ; calculate CE deltas given TR deltas
 
@@ -1022,9 +1058,14 @@ fn update_entities(game_state: *GameState) void {
         //@     STA CE.XD
         //@     LDA TR.YD
         //@     JSR GP.TRC
+        trackball_delta = toolbox.clamp(
+            trackball_delta,
+            .{ -9, -9 },
+            .{ 9, 9 },
+        );
         //@     NEGA        ;  invert delta Y
         //@     STA CE.YD
-
+        trackball_delta[1] = -trackball_delta[1];
         //@    ;  rotate
         //@     LDA CE.XD    ; calculate new CE.YD
         //@     ASL
@@ -1037,6 +1078,13 @@ fn update_entities(game_state: *GameState) void {
         //@     STA CE.XD    ; and store
         //@     TRAM CE.TMP CE.YD    ; also store CE.YD
 
+        //NOTE: we need a temp variable here since trackball_delta gets mutated during construction of the V2
+        const temp = V2{
+            (trackball_delta[1] << 1) - trackball_delta[0],
+            (trackball_delta[0] << 1) + trackball_delta[1],
+        };
+        trackball_delta = temp;
+
         //@ ;  truncate again
         //@     TRAI 0F TEMP1
         //@     LDA CE.XD
@@ -1045,42 +1093,60 @@ fn update_entities(game_state: *GameState) void {
         //@     LDA CE.YD
         //@     JSR GP.TRC
         //@     STA CE.YD
+        game_state.trackball_delta = toolbox.clamp(
+            trackball_delta,
+            .{ -0xF, -0xF },
+            .{ 0xF, 0xF },
+        );
 
         //@ ;    jumping
         //@     LDA EN.JFL
         //@     IFNE
-        //@      LDA EN.JDL
-        //@      CMP #1F
-        //@      IFEQ
-        //@       LDA EN.IX
-        //@       ASLS 3
-        //@       STA EN.JPX
-        //@       LDA EN.IY
-        //@       ASLS 3
-        //@       STA EN.JPY
-        //@      ENDIF
-        //@      LDA EN.JDL
-        //@      CMP #1E
-        //@      IFEQ
-        //@       LDA EN.IX
-        //@       ASLS 3
-        //@       SUB EN.JPX
-        //@       DIV8
-        //@       STA EN.JPX
+        if (game_state.entity_jump_flag) {
+            //@      LDA EN.JDL
+            //@      CMP #1F
+            //@      IFEQ
+            if (game_state.entity_jump_delay == 0x1F) {
+                //@       LDA EN.IX
+                //@       ASLS 3
+                //@       STA EN.JPX
+                //@       LDA EN.IY
+                //@       ASLS 3
+                //@       STA EN.JPY
+                game_state.jump_delta = game_state.entity_fine_position[0] * V2{ 8, 8 };
+                //@      ENDIF
+            }
+            //@      LDA EN.JDL
+            //@      CMP #1E
+            //@      IFEQ
+            if (game_state.entity_jump_delay == 0x1E) {
+                //@       LDA EN.IX
+                //@       ASLS 3
+                //@       SUB EN.JPX
+                //@       DIV8
+                //@       STA EN.JPX
 
-        //@       LDA EN.IY
-        //@       ASLS 3
-        //@       SUB EN.JPY
-        //@       DIV8
-        //@       STA EN.JPY
-        //@      ENDIF
-        //@      LDA EN.JDL
-        //@      CMP #1E
-        //@      IFCC
-        //@       TRAM EN.JPX CE.XD
-        //@       TRAM EN.JPY CE.YD
-        //@      ENDIF
-        //@     ENDIF
+                //@       LDA EN.IY
+                //@       ASLS 3
+                //@       SUB EN.JPY
+                //@       DIV8
+                //@       STA EN.JPY
+                game_state.jump_delta =
+                    ((game_state.entity_fine_position[0] * V2{ 8, 8 }) - game_state.jump_delta) /
+                    V2{ 8, 8 };
+                //@      ENDIF
+            }
+            //@      LDA EN.JDL
+            //@      CMP #1E
+            //@      IFCC
+            if (game_state.entity_jump_delay < 0x1E) {
+                //@       TRAM EN.JPX CE.XD
+                //@       TRAM EN.JPY CE.YD
+                game_state.trackball_delta = game_state.jump_delta;
+                //@      ENDIF
+            }
+            //@     ENDIF
+        }
     }
 
     //@ ;     end of wave calculation
@@ -1225,10 +1291,9 @@ fn move_entity(
             //@       LDA ATRACT
             //@       IFNE
             if (!game_state.is_in_attract_mode) {
-                //*****TODO******
-                unreachable;
                 //@        TRAM CE.XD EN.XD    ; trackball inputs
                 //@        TRAM CE.YD EN.YD
+                game_state.entity_movement_delta = game_state.trackball_delta;
             }
             //@       ELSE
             else {
@@ -3109,7 +3174,7 @@ fn update_player(game_state: *GameState) void {
     }
 
     //@     JSR EN.BRD        ;  read both buttons
-    _ = read_both_buttons(game_state);
+    _ = read_button(game_state);
 
     //@     LDA ATRACT
     //@     IFEQ
@@ -3220,11 +3285,9 @@ fn update_elevators(game_state: *GameState) void {
 }
 
 //EN.BRD
-fn read_both_buttons(game_state: *GameState) usize {
-    //TODO
-    _ = game_state;
-
-    return 0;
+inline fn read_button(game_state: *GameState) bool {
+    game_state.jump_button_pressed = game_state.button_pressed;
+    return game_state.button_pressed;
 }
 
 //EN.EWC
@@ -3261,20 +3324,22 @@ fn end_of_wave_calculation(game_state: *GameState) void {
             //@     ORA CE.COC+1
             //@     IFEQ        ;  all gems gone
             if (game_state.wave_gems_left == 0) {
-                //****TODO******
-                unreachable;
                 //@      JSR EN.LDB    ;  last dot bonus awarded
+                last_dot_bonus(game_state);
                 //@      JSR WV.UPD
+                new_wave(game_state);
                 //@      JSR GM.EW0    ;  end of wave state
+                init_end_of_wave_state(game_state);
                 //@     ENDIF
             }
             //@     ELSE        ;  end wave quickly when warping
         } else {
-            //****TODO******
-            unreachable;
             //@     JSR WV.MBF
+            move_bear_to_font(game_state);
             //@     JSR WV.UPD
+            new_wave(game_state);
             //@     JSR GM.EW0
+            init_end_of_wave_state(game_state);
             //@     ENDIF
         }
     }
@@ -3294,30 +3359,137 @@ fn end_of_wave_calculation(game_state: *GameState) void {
     //@     IFEQ
     if (game_state.wave_gems_left == 0) {
         //@      JSR EN.EW    ;  end of wave
-        //****TODO******
-        unreachable;
+        start_end_of_wave_sequence(game_state);
         //@     ENDIF
     }
 
-    //****TODO******
     //@ ;  warp
     //@     LDA EN.JBP
     //@     IFEQ
-    //@      RTS
-    //@     ENDIF
+    if (game_state.jump_button_pressed) {
+        //@      RTS
+        return;
+        //@     ENDIF
+    }
     //@ ;  button depressed
 
     //@     LDA WV.XCO
     //@     IFNE
     //@      JMP 55$
     //@     ENDIF
+    if (game_state.wave_xco != 0) {
+        //@ ;  ordinary warp
+        //@     IFEQA WV.YCO 0
+        if (game_state.wave_yco == 0) {
+            //@     LDA EN.TFL
+            //@     IFNE
+            if (game_state.entity_in_tunnel[PLAYER_ENTITY]) {
+                //@     LDA WV.WAR
+                //@     IFNE
+                if (game_state.wave_warp != 0) {
+                    warp_player(game_state.wave_warp, game_state);
+                    return;
+                    //@     ENDIF
+                }
+                //@     ENDIF
+            }
+            //@     ENDIF
 
-    //@ ;  ordinary warp
+        }
+
+        //@ ;  secret warp #1
+        //@     LDA WV.YCO
+        //@     IFEQ
+        //@     IFEQA EN.MX 1
+        //@     IFEQA EN.MY 1
+        if (game_state.wave_yco == 0 and
+            @reduce(
+            .And,
+            game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
+        )) {
+            //@      LDA #2
+            warp_player(2, game_state);
+            return;
+            //@      JMP 10$
+        }
+        //@     ENDIF
+        //@     ENDIF
+        //@     ENDIF
+    }
+    //@ 55$:
+
+    //@ ;  secret warp #2
+    //@     IFEQA WV.XCO 2
     //@     IFEQA WV.YCO 0
-    //@     LDA EN.TFL
+    //@     IFEQA EN.MX 3
+    //@     IFEQA EN.MY 3
+    //@     LDA EN.CDL
     //@     IFNE
-    //@     LDA WV.WAR
-    //@     IFNE
+    if (game_state.wave_xco == 2 and
+        game_state.wave_yco == 0 and
+        game_state.entity_collision_delay != 0 and
+        @reduce(
+        .And,
+        game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 3, 3 },
+    )) {
+        //@      LDA #4
+        //@      JMP 10$
+        warp_player(4, game_state);
+        return;
+    }
+    //@     ENDIF
+    //@     ENDIF
+    //@     ENDIF
+    //@     ENDIF
+    //@     ENDIF
+
+    //@ ;  secret warp #3
+    //@     IFEQA WV.XCO 4
+    //@     IFEQA WV.YCO 2
+    //@     IFEQA EN.MX 1
+    //@     IFEQA EN.MY 1
+    if (game_state.wave_xco == 4 and
+        game_state.wave_yco == 2 and
+        @reduce(
+        .And,
+        game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
+    )) {
+        //@      LDA #6
+        //@      JMP 10$
+        warp_player(6, game_state);
+        return;
+    }
+    //@     ENDIF
+    //@     ENDIF
+    //@     ENDIF
+    //@     ENDIF
+
+    //@ ;  FXL
+    //@     IFEQA WV.XCO 5
+    //@     IFEQA WV.YCO 3
+    //@     IFEQA EN.MX 1
+    //@     IFEQA EN.MY 1
+    if (game_state.wave_xco == 5 and
+        game_state.wave_yco == 3 and
+        @reduce(
+        .And,
+        game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
+    )) {
+        //@      LDA #35
+        //@      JSR MS.DRW
+        _ = draw_message(0x35, game_state);
+    }
+    //@     ENDIF
+    //@     ENDIF
+    //@     ENDIF
+    //@     ENDIF
+    //@     RTS
+}
+fn warp_player(warp: isize, game_state: *GameState) void {
+    if (true) {
+        //TODO remove this, once we've stepped through this code
+        unreachable;
+    }
     //@ 10$:
     //@      STA TEMP5+1
 
@@ -3330,15 +3502,21 @@ fn end_of_wave_calculation(game_state: *GameState) void {
     //@      STA SC.INC+2
     //@      LDA #99
     //@      STA SC.GEM
+    game_state.gems_collected = 99;
+    var score: isize = 0;
+
     //@      LDX TEMP5+1
     //@      BEGIN
-    //@       SED
-    //@       LDA SC.INC+2
-    //@       ADD #7
-    //@       STA SC.INC+2
-    //@       CLD
-    //@       DEX
-    //@      EQEND
+    for (0..warp) |_| {
+        //@       SED
+        //@       LDA SC.INC+2
+        //@       ADD #7
+        //@       STA SC.INC+2
+        score += 70000;
+        //@       CLD
+        //@       DEX
+        //@      EQEND
+    }
 
     //@      LDY #4
     //@      LDX TEMP5+1
@@ -3346,6 +3524,7 @@ fn end_of_wave_calculation(game_state: *GameState) void {
     //@      IFCS
     //@      LDY #5
     //@      ENDIF
+    const lives: isize = if (u8gte(warp, 3)) 5 else 4;
     //@      LDA WV.LIV
     //@      STA TEMP1
     //@      CPY TEMP1
@@ -3353,71 +3532,22 @@ fn end_of_wave_calculation(game_state: *GameState) void {
     //@       LDY TEMP1
     //@      ENDIF
     //@      STY WV.LIV
+    game_state.lives = @max(game_state.lives, lives);
+
     //@      JSR SC.UPD
+    update_score(score, game_state);
 
     //@      TRAM TEMP5+1 WV.XCD    ;  warp
+    game_state.wave_xcd = warp;
     //@      LDX #0
     //@      STX WV.YCD
+    game_state.wave_ycd = 0;
     //@      DEX
     //@      STX EN.WRF    ;  end wave immediately
+    game_state.entity_is_warping = true;
     //@      JMP EN.EW
+    start_end_of_wave_sequence(game_state);
     //@ ;     RTS
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-
-    //@ ;  secret warp #1
-    //@     LDA WV.YCO
-    //@     IFEQ
-    //@     IFEQA EN.MX 1
-    //@     IFEQA EN.MY 1
-    //@      LDA #2
-    //@      JMP 10$
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-
-    //@ 55$:
-
-    //@ ;  secret warp #2
-    //@     IFEQA WV.XCO 2
-    //@     IFEQA WV.YCO 0
-    //@     IFEQA EN.MX 3
-    //@     IFEQA EN.MY 3
-    //@     LDA EN.CDL
-    //@     IFNE
-    //@      LDA #4
-    //@      JMP 10$
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-
-    //@ ;  secret warp #3
-    //@     IFEQA WV.XCO 4
-    //@     IFEQA WV.YCO 2
-    //@     IFEQA EN.MX 1
-    //@     IFEQA EN.MY 1
-    //@      LDA #6
-    //@      JMP 10$
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-
-    //@ ;  FXL
-    //@     IFEQA WV.XCO 5
-    //@     IFEQA WV.YCO 3
-    //@     IFEQA EN.MX 1
-    //@     IFEQA EN.MY 1
-    //@      LDA #35
-    //@      JSR MS.DRW
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-    //@     ENDIF
-    //@     RTS
 }
 // SC.LD2:
 fn draw_lives(game_state: *GameState) void {
@@ -3740,45 +3870,68 @@ fn draw_beginning_of_wave_message(game_state: *GameState) void {
     //@      LDA ATRACT
     //@      IFNE
     if (!game_state.is_in_attract_mode) {
-        //TODO:
-        unreachable;
         //@       LDA WV.XCO
+        game_state.wave_xco = 0;
         //@       STA TEMP5+1
+        var temp: isize = 0;
 
         //@       LDA WV.MFL
+        var message: usize = 0;
         //@       IFNE
+        if (game_state.wave_message_flag) {
 
-        //@       LDA WV.MNM
-        //@       IFEQ        ;  on wave 1
-        //@        LDX WV.WAR
-        //@        IFNE
-        //@         STX TEMP5+1
-        //@         LDA #1B
-        //@        ENDIF
-        //@       ELSE
-        //@       CMP #1
-        //@       IFEQ
-        //@        LDX EEEXTR
-        //@        IFNE
-        //@         LDA #2B    ;  if no extra life, use ordinary title
-        //@        ENDIF
-        //@       ENDIF
-        //@       ENDIF
-        //@       JSR MS.DRW    ; wave titles
-        //@       ENDIF
+            //@       LDA WV.MNM
+            //@       IFEQ        ;  on wave 1
+            if (game_state.wave_message_number == 0) {
+
+                //@        LDX WV.WAR
+                //@        IFNE
+                if (game_state.wave_warp != 0) {
+                    //@         STX TEMP5+1
+                    temp = 1;
+                    //@         LDA #1B
+                    message = 0x1B;
+                }
+                //@        ENDIF
+            }
+            //@       ELSE
+            else {
+                //@       CMP #1
+                //@       IFEQ
+                if (game_state.wave_message_number == 1) {
+                    //NOTE: extra lives won't be enabled
+                    //@        LDX EEEXTR
+                    //@        IFNE
+                    //@         LDA #2B    ;  if no extra life, use ordinary title
+                    //@        ENDIF
+                    //@       ENDIF
+                    message = 0x2B;
+                }
+                //@       ENDIF
+            }
+            //@       JSR MS.DRW    ; wave titles
+            _ = draw_message(message, game_state);
+            //@       ENDIF
+        }
 
         //@       LDA #1F
         //@       JSR MS.DRW    ; level
+        const level_number_position =
+            draw_message(0x1F, game_state);
 
         //@       LDA TEMP5+1    ;  level number
         //@       ADD #1
-        //@       JSR DG.2OT
+        draw_2_digit_number_suppress_leading_zero(
+            temp + 1,
+            level_number_position,
+            game_state,
+        );
     }
     //@      ELSE
     else {
         //@       LDA #19    ; play crystal castles
         //@       JSR MS.DRW
-        draw_message(0x19, game_state);
+        _ = draw_message(0x19, game_state);
         //@      ENDIF
     }
 
@@ -4997,7 +5150,8 @@ const MESSAGE_DATA = [_][]const u8{
 };
 
 //MS.DRW
-fn draw_message(message_number: usize, game_state: *GameState) void {
+//returns position right after message
+fn draw_message(message_number: usize, game_state: *GameState) V2 {
     //@ASL
     //@TAX
 
@@ -5064,6 +5218,7 @@ fn draw_message(message_number: usize, game_state: *GameState) void {
         //@DEC MS.LEN
         //@EQEND
     }
+    return position;
 }
 
 //WR.DRW
@@ -5101,7 +5256,7 @@ fn draw_word(
         //@ TRAM @WR.PTR(Y) AL.DIG
         //@ JSR AL.DRW
         add_draw_character_command(
-            char,
+            ascii_to_cc(char),
             color,
             position.*,
             game_state,
@@ -5185,12 +5340,13 @@ fn compute_wave_parameters(game_state: *GameState) void {
     //@    JSR CL.UPD
     update_colors(game_state);
 
-    //TODO.  We may not need to implement WV.MNM if its always dependent on WV.NUM
     {
         //@;  update message pointer
         //@    LDA WV.NUM
         //@    STA WV.MNM
+        game_state.wave_message_number = game_state.wave_current;
         //@    TRAI 0FF WV.MFL
+        game_state.wave_message_flag = true;
     }
 }
 
@@ -5436,12 +5592,12 @@ fn initialize_city(game_state: *GameState) void {
 fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState) void {
     //@CT.HSS: .WORD SC.HI1+HFSIZ-1,SC.HI2+HFSIZ-1,SC.HI3+HFSIZ-1
     //@    .WORD SC.HI2+HFSIZ-1,SC.HI3+HFSIZ-1
-    const initials = [_]toolbox.Rune{
-        game_state.scoreboard.entries[0].name.rune_at(0).rune,
-        game_state.scoreboard.entries[0].name.rune_at(1).rune,
-        game_state.scoreboard.entries[0].name.rune_at(2).rune,
-        game_state.scoreboard.entries[0].name.rune_at(1).rune,
-        game_state.scoreboard.entries[0].name.rune_at(2).rune,
+    const initials = [_]u8{
+        game_state.scoreboard.entries[0].name.bytes[0],
+        game_state.scoreboard.entries[0].name.bytes[1],
+        game_state.scoreboard.entries[0].name.bytes[2],
+        game_state.scoreboard.entries[0].name.bytes[1],
+        game_state.scoreboard.entries[0].name.bytes[2],
     };
     //@;  get initial
     //@LDA TEMP4
@@ -5478,7 +5634,7 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
     //@ASLS 2
     //@ADD TEMP1
     //@STA TEMP1
-    var letter_bitmap_array_cursor = (initials[initial_index] - 'A') * 5;
+    var character_bitmap_array_cursor = (ascii_to_cc(initials[initial_index])) * 5;
 
     //@TRAI 4 TEMP3
     //@BEGIN
@@ -5487,7 +5643,7 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
         //@LDX TEMP1
         //@LDA AL.55L(X)
         //@STA TEMP5
-        var character_row = LETTER_BITMAPS[letter_bitmap_array_cursor];
+        var character_row = CHARACTER_BITMAPS[character_bitmap_array_cursor];
 
         //@LDX #4
         //@BEGIN
@@ -5520,7 +5676,7 @@ fn add_high_score_initial_to_castle(initial_index: usize, game_state: *GameState
         game_state.castle_adl += 0x16 * 5 + 1;
 
         //@INC TEMP1
-        letter_bitmap_array_cursor += 1;
+        character_bitmap_array_cursor += 1;
         //@DEC TEMP3
         //@MIEND
     }
@@ -5783,11 +5939,13 @@ fn update_attract_mode_state(game_state: *GameState) void {
     //@    TRAI 0 ATRACT        ; atract mode is on
     game_state.is_in_attract_mode = true;
 
-    //TODO: handle credits
     //@    LDA $$CRDT
     //@    IFNE
-    //@     JSR MN.SBD        ;  start button decode
-    //@    ENDIF
+    if (game_state.number_of_credits > 0) {
+        start_button_decode(game_state);
+        //@     JSR MN.SBD        ;  start button decode
+        //@    ENDIF
+    }
 
     //@    TRAI 048 AL.Y
     //@    TRAI 0B1 AL.X
@@ -5805,8 +5963,7 @@ fn update_attract_mode_state(game_state: *GameState) void {
             game_state,
         );
 
-        //TODO: handle different coin states
-        //@I don't think we will have something called "free play?"
+        //@NOTE: As of now, we won't have something called "free play?"
         //@     LDA $CMODE
         //@     AND #03
         //@     IFEQ
@@ -5821,8 +5978,9 @@ fn update_attract_mode_state(game_state: *GameState) void {
         //@     ENDIF
         //@     ENDIF
         //@     JSR WR.DRW
+        const word: isize = if (game_state.number_of_credits > 0) 0x10 else 0xA;
         draw_word(
-            0xA,
+            word,
             &word_position,
             0x7F,
             game_state,
@@ -5859,30 +6017,27 @@ fn update_attract_mode_state(game_state: *GameState) void {
         );
 
         //@    LDA $CNCT
+        //NOTE: CNCT is always 0
         //@    IFEQ
         //@     TRAI 0D0 AL.X
         //@    ENDIF
-        if (game_state.number_of_credits == 0) {
-            word_position[0] = 0xD0;
-        }
+        word_position[0] = 0xD0;
 
         //@    LDA $$CRDT
         //@    IFEQ
-        if (game_state.number_of_credits == 0) {
-            //@     LDY $CNCT
-            //@     BNE 10$
-            //@    ENDIF
-            //NOTE: we won't have a concept of 1/2 credits so if
-            //@$$CRDT (credit count) is 0
-            //@$CNCT (coin count) would also be 0.
+        //@     LDY $CNCT
+        //@     BNE 10$
+        //@    ENDIF
+        //NOTE: we won't have a concept of 1/2 credits so if
+        //@$$CRDT (credit count) is 0
+        //@$CNCT (coin count) would also be 0.
 
-            //@    JSR DG.2OT
-            draw_2_digit_number_suppress_leading_zero(
-                game_state.number_of_credits,
-                word_position,
-                game_state,
-            );
-        }
+        //@    JSR DG.2OT
+        draw_2_digit_number_suppress_leading_zero(
+            game_state.number_of_credits,
+            word_position,
+            game_state,
+        );
 
         //@10$:
 
@@ -5921,7 +6076,7 @@ fn update_attract_mode_state(game_state: *GameState) void {
             //@      STA P2.LIV
             //@      STA PL.UP
             //@      STA WV.WAR        ;  reset warp
-            game_state.wave_enable_warp = false;
+            game_state.wave_warp = 0;
             //@      JSR MN.SCI
             initialize_and_draw_player_score(game_state);
             //@      JSR GM.ST0
@@ -6033,6 +6188,7 @@ fn update_wave_motion_objects_state(game_state: *GameState) void {
     }
     //@ JMP GM.ENL
 }
+//GM.GP
 fn update_game_play_state(game_state: *GameState) void {
     //@  JSR MN.FRA        ;  frame handler
     frame_handler(game_state);
@@ -6094,13 +6250,30 @@ fn update_death_sequence_state(game_state: *GameState) void {
     //@     ELSE
     else {
         //@       JSR GM.DH0    ;  else continue
-        //TODO:
-        unreachable;
+        init_death_handler_state(game_state);
         //@     ENDIF
     }
 
     //@     JMP GM.ENL
 }
+//@ ;  state 9 death handler
+//@ GM.DH0:
+fn init_death_handler_state(game_state: *GameState) void {
+    //@     TRAI 09 GM.STA
+    game_state.current_state = .DeathHandler;
+    //@     RTS
+}
+//@ GM.DH:
+fn update_death_handler_state(game_state: *GameState) void {
+    //@ JSR EN.DTH    ;  player death
+    death_of_player(game_state);
+    //@ JSR GM.WO0    ;  and only restore motion objects
+    game_state.current_state = .InitWaveMotionObjects;
+    //@ JMP GM.ENL
+    //@ RTS
+
+}
+
 //@ ;  state 6  end of game
 //@ GM.EG0:
 fn init_end_of_game_state(game_state: *GameState) void {
@@ -6120,7 +6293,7 @@ fn init_end_of_game_state(game_state: *GameState) void {
         //@     ENDIF
     }
     //TODO:
-    unreachable;
+    toolbox.panic("TODO: Implement Game Over", .{});
 
     //@     TRAI 0 TEMP4
     //@     LDA ST.TIM
@@ -6278,9 +6451,9 @@ fn update_end_of_game_state(game_state: *GameState) void {
     frame_handler(game_state);
 
     //@     JSR EN.BRD
-    const buttons = read_both_buttons(game_state);
+    const button = read_button(game_state);
     //@     BNE 10$
-    if (buttons == 0) {
+    if (!button) {
 
         //@     DEC MN.DEL
         //@     IFEQ
@@ -6288,7 +6461,7 @@ fn update_end_of_game_state(game_state: *GameState) void {
         //@     IFEQ
         game_state.main_loop_delay -= 1;
     }
-    if (buttons != 0 or game_state.main_loop_delay == 0) {
+    if (button or game_state.main_loop_delay == 0) {
         //@ 10$:     JSR GM.HF0    ;  high score table
         init_hall_of_fame_state(game_state);
         //@     ENDIF
@@ -6382,7 +6555,7 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
     clear_screen(game_state);
     //@     LDA #1D
     //@     JSR MS.DRW        ;  hall of fame title
-    draw_message(0x1D, game_state);
+    _ = draw_message(0x1D, game_state);
 
     //@     HF.YOF=48
     const hf_yof = 0x48;
@@ -6446,7 +6619,7 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
         //@     TRAM   SC.HI1(X) AL.DIG
         //@     JSR AL.DRW
         add_draw_character_command(
-            entry.name.bytes[0],
+            ascii_to_cc(entry.name.bytes[0]),
             .White,
             .{ x, y },
             game_state,
@@ -6457,7 +6630,7 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
         //@     TRAM   SC.HI2(X) AL.DIG
         //@     JSR AL.DRW
         add_draw_character_command(
-            entry.name.bytes[1],
+            ascii_to_cc(entry.name.bytes[1]),
             .White,
             .{ x, y },
             game_state,
@@ -6468,7 +6641,7 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
         //@     TRAM   SC.HI3(X) AL.DIG
         //@     JSR AL.DRW
         add_draw_character_command(
-            entry.name.bytes[2],
+            ascii_to_cc(entry.name.bytes[2]),
             .White,
             .{ x, y },
             game_state,
@@ -6548,7 +6721,7 @@ fn init_explaination_board_state(game_state: *GameState) void {
         clear_screen(game_state);
         //@      LDA #23    ;  draw it if no pending coins
         //@      JSR MS.DRW
-        draw_message(0x23, game_state);
+        _ = draw_message(0x23, game_state);
         //@     ENDIF
     }
 
@@ -6573,7 +6746,7 @@ fn update_explaination_board_state(game_state: *GameState) void {
     //@     JSR MN.FRA
     frame_handler(game_state);
 
-    const buttons = read_both_buttons(game_state);
+    const button = read_button(game_state);
     //@     LDA $$CRDT
     //@     ORA $CNCT
     //@     BNE 10$
@@ -6594,7 +6767,7 @@ fn update_explaination_board_state(game_state: *GameState) void {
     game_state.main_loop_delay -= 1;
     //@     IFEQ
     //@ 10$:
-    if (buttons != 0 or game_state.number_of_credits > 0 or game_state.main_loop_delay == 0) {
+    if (button or game_state.number_of_credits > 0 or game_state.main_loop_delay == 0) {
         //@      JSR GR.SCL
         clear_screen(game_state);
         //@      JSR GM.AT0
@@ -6603,6 +6776,54 @@ fn update_explaination_board_state(game_state: *GameState) void {
         //@     ENDIF
     }
     //@     JMP GM.ENL
+}
+//@ ;  state 5  end of wave
+//@ GM.EW0:
+fn init_end_of_wave_state(game_state: *GameState) void {
+    //@    TRAI 5 GM.STA
+    game_state.current_state = .EndOfWave;
+    //@    STA  MN.DEL
+    game_state.main_loop_delay = 5;
+    //@    RTS
+}
+
+//@ GM.EW:
+fn update_end_of_wave_state(game_state: *GameState) void {
+    //@    JSR MN.FRA
+    frame_handler(game_state);
+
+    //@    LDA WV.XCD
+    //@    CMP #09
+    //@    IFCS
+    //@    LDA WV.YCD
+    //@    CMP #1
+    //@    IFEQ
+    if (u8gte(game_state.wave_xcd, 9) and
+        game_state.wave_ycd == 1)
+    {
+        //@     LDA WV.LIV
+        //@     STA WV.EOG      ;  end of game on
+        game_state.wave_end_of_game = true;
+        //@     TRAI 1 WV.LIV
+        game_state.lives = 1;
+        //@     JSR GM.DT0
+        init_death_sequence_state(game_state);
+        //@     JMP GM.ENL
+        return;
+    }
+    //@    ENDIF
+    //@    ENDIF
+
+    //@    DEC MN.DEL
+    game_state.main_loop_delay -= 1;
+    //@    IFEQ
+    if (game_state.main_loop_delay == 0) {
+        //@     JSR GM.EX0   ;  next, scroll
+        toolbox.panic("TODO: Implement rest of game!", .{});
+        //@    ENDIF
+    }
+
+    //@    JMP GM.ENL
 }
 //@ ;-------------------
 //@ ;  explanation board
@@ -6751,18 +6972,18 @@ fn draw_2_digit_number(
     //@    TRAI 2*6 SC.LEF    ; pixels left to erase
     var pixels_left_to_erase: isize = 2 * 6; //6 pixels per digit
     var position = start_position;
-    var n = number;
 
+    var divisor: isize = 10;
     for (0..2) |_| {
         //@    JSR AL.DGO
         draw_digit(
-            @intCast(@mod(n, 10)),
+            @intCast(@mod(@divTrunc(number, divisor), 10)),
             &position,
             suppress_leading_zero,
             &pixels_left_to_erase,
             game_state,
         );
-        n = @divExact(n, 10);
+        divisor = @divTrunc(divisor, 10);
         suppress_leading_zero.* = false;
     }
 
@@ -6815,7 +7036,7 @@ fn draw_digit(
     //@    TRAI CL.ALP AL.COL
     //@    JSR AL.DRW
     add_draw_character_command(
-        @intCast(@mod(digit, 10) + '0'),
+        @intCast(digit),
         color,
         position.*,
         game_state,
@@ -7830,7 +8051,7 @@ fn add_draw_command(
         return;
     }
     toolbox.assert(
-        command.shape != .Character or command.character >= ' ',
+        command.shape != .Character or command.character < CHARACTER_BITMAPS.len,
         "Bad character value: {}",
         .{command.character},
     );
@@ -7878,6 +8099,249 @@ inline fn u8lt(a: isize, b: isize) bool {
     return (a & 0xFF) < (b & 0xFF);
 }
 
+inline fn ascii_to_cc(ascii: u8) u8 {
+    const result = switch (ascii) {
+        '0'...'9' => ascii - '0',
+        else => ascii - 'A' + 10,
+    };
+    return result;
+}
+
 fn check_and_display_atari_easter_egg() void {
     //TODO
+}
+
+//@ ;---------------------
+//@ ;  start button decode
+//@ MN.SBD:
+fn start_button_decode(game_state: *GameState) void {
+    //@     JSR EN.BRD
+    const button = read_button(game_state);
+    //@     TAY
+    //@     AND #E.ST1
+    //@     IFNE
+    if (button) {
+        //@       DEC $$CRDT
+        game_state.number_of_credits -= 1;
+        //@       TRAI 0FF ST.PLY
+        //NOTE: ST.PLY seems to only be used in the VBlank handler, which we don't have
+
+        //@       JSR MN.STL
+        //@       STA P1.LIV
+        game_state.lives = STARTING_LIVES;
+        //@       TRAI 0 PL.FLG        ;  one player game
+        //@       STA P2.LIV
+        //@ 10$:      STA PL.UP
+        //NOTE: only 1 player supported
+        //@       JSR MN.SCI
+        initialize_and_draw_player_score(game_state);
+        //@       SEI
+        //@       TRAI 0FF ATRACT    ;  turn off atract flag
+        game_state.is_in_attract_mode = false;
+        //@       JSR  RCN        ;  and reset sounds
+        //TODO: sound
+        //@       CLI
+        //@       JSR GM.ST0
+        initialize_game_start_state(game_state);
+        //@       RTS
+        //@     ENDIF
+    }
+}
+
+//@ ;-----------------
+//@ ;  death of player
+//@ EN.DTH:
+fn death_of_player(game_state: *GameState) void {
+    //@     LDY #0
+    //@     TRAI 2*EN.MAX EN.NUM
+
+    //@     LDX #0
+    //@     BEGIN
+    for (0..MAX_NUMBER_OF_ENTITIES) |entity| {
+        //@     TXA
+        //@     IFNE
+        if (entity != PLAYER_ENTITY) {
+            //@     TR16AM EN.MA2(X) EZ.MA2
+            //@     JSR EN.CCB
+            //clear collision bit
+            game_state.current_wave_data[game_state.entity_playfield_square_flags_index[entity]] &= 0b11110111;
+            //@     ENDIF
+        }
+
+        //@     INXS 2
+        //@     CPX EN.NUM
+        //@     PLEND
+    }
+
+    //@     RTS
+}
+
+//@ ;----------------------------
+//@ ;  start end of wave sequence
+//@ EN.EW:
+fn start_end_of_wave_sequence(game_state: *GameState) void {
+    //@     LDX #2
+    //@     BEGIN
+    for (1..MAX_NUMBER_OF_ENTITIES) |entity| {
+        //@       LDA EN.LMD(X)
+        //@       CMP #3
+        //@       IFNE
+        if (game_state.entity_life_mode[entity] != .Dead) {
+            //@        TRAI 1 EN.LMD(X)    ;  everybody is dying
+            game_state.entity_life_mode[entity] = .Dying;
+            //@       ENDIF
+        }
+        //@     INXS 2
+        //@     CPX EN.NUM
+        //@     PLEND
+
+    }
+    //@     TRAI 0FF EN.EWM    ;  end of wave mode 1
+    game_state.entity_end_of_wave_mode = true;
+    //@     RTS
+}
+
+//@ ;----------------------
+//@ ;  last dot bonus award
+//@ EN.LDB:
+fn last_dot_bonus(game_state: *GameState) void {
+    //@    JSR WV.MBF   ;  move bear out of the way
+    move_bear_to_font(game_state);
+    //@    JSR AL.MDB   ;  message display board
+    message_display_board(game_state);
+
+    var message: usize = 0;
+    //@    LDA EN.LDF
+    //@    IFEQ
+    if (game_state.entity_that_took_last_gem == PLAYER_ENTITY) {
+        //@     LDA #0E
+        //@     JSR MN.SN1
+        //TODO: sound
+
+        //@     LDA #0
+        //@     STA SC.INC
+        //@     STA 2+SC.INC
+        //@     STA SC.NM
+        //@     STA 2+SC.NM
+
+        //@     TRAI 094 AL.X
+        //@     TRAI 088 AL.Y
+
+        //@     LDA WV.XCO
+        //@     ASLS 2
+        //@     ADD WV.YCO
+        //@     ADD #10.
+        //@     JSR AL.CNV
+        //@     STA 1+SC.NM
+        //@     STA 1+SC.INC
+        const bonus = game_state.wave_xco * 4 + game_state.wave_yco + 1000;
+        //@     JSR SC.NDS      ;  display bonus awarded
+        draw_6_digit_number(bonus, .{ 0x94, 0x88 }, game_state);
+
+        //@     JSR SC.UPD
+        update_score(bonus, game_state);
+
+        //@     LDA #20
+        message = 0x20;
+    }
+    //@    ELSE
+    else {
+        //@     LDA #0F
+        //@     JSR MN.SN1
+        //TODO: sound
+        //@     LDA #21
+        message = 0x21;
+        //@    ENDIF
+    }
+    //@    JSR MS.DRW
+    _ = draw_message(message, game_state);
+
+    //@    TRAI 90 MN.DEL
+    game_state.main_loop_delay = 0x90;
+    //@    BEGIN
+    while (game_state.main_loop_delay > 0) {
+        //@     JSR MN.FRA
+        frame_handler(game_state);
+        //@     DEC MN.DEL
+        game_state.main_loop_delay -= 1;
+
+        //@    EQEND
+    }
+
+    //@    RTS
+}
+
+//@ ;------------------------------------
+//@ ;  move bear to front
+//@ WV.MBF:
+fn move_bear_to_font(game_state: *GameState) void {
+    //@    TRAI 08 EN.DSY
+    //@    TRAI 80 EN.DSX
+    //@    LDX #0
+    //@    STX EN.PR1      ;  high priority
+    game_state.entity_priority[PLAYER_ENTITY][0] = 0;
+    //@    LDA #19
+    //@    JSR EN.PCF
+    fill_entity_pictures(0x19, PLAYER_ENTITY, game_state);
+    //@    JMP WV.BMV   ;  move it
+    move_player_to_destination(.{ 0x80, 8 }, game_state);
+}
+
+//@ ;-----------------------
+//@ ;  message display board
+//@ AL.MDB:
+fn message_display_board(game_state: *GameState) void {
+    //@    TRAI 30 AL.X
+    //@    TRAI 7C AL.Y
+    //@    LDA #0A0
+    //@    JSR SC.ERA
+    screen_erase(.{ 0x30, 0x7C }, 0xA0, game_state);
+    //@    TRAI 84 AL.Y
+    //@    LDA #0A0
+    //@    JSR SC.ERA
+    screen_erase(.{ 0x30, 0x84 }, 0xA0, game_state);
+    //@    TRAI 8C AL.Y
+    //@    LDA #0A0
+    //@    JSR SC.ERA
+    screen_erase(.{ 0x30, 0x8C }, 0xA0, game_state);
+    //@    RTS
+}
+
+//@ ;-----------------------
+//@ ;  new wave, update destination, if necessary
+//@ WV.UPD:
+fn new_wave(game_state: *GameState) void {
+    //@    LDA WV.XCD
+    //@    CMP WV.XCO
+    //@    IFEQ
+
+    //@    LDA WV.YCD
+    //@    CMP WV.YCO
+    //@    BEQ 1$
+    //@    ENDIF
+    if (game_state.wave_xco != game_state.wave_xcd or
+        game_state.wave_yco != game_state.wave_ycd)
+    {
+        //@    RTS
+        return;
+    }
+    //@ 1$:       ; old and new equal, so update
+
+    //@    LDA WV.YCO
+    //@    CMP #3
+    //@    IFNE
+    //@     LDA WV.YCO
+    //@     ADD #1
+    //@    ELSE
+    //@     INC WV.XCD
+    //@     LDA #0
+    //@    ENDIF
+    //@    STA WV.YCD
+    game_state.wave_ycd =
+        if (game_state.wave_yco == 3)
+        game_state.wave_xcd + 1
+    else
+        game_state.wave_yco + 1;
+
+    //@    RTS
 }
