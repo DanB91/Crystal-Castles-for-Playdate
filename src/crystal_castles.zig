@@ -630,15 +630,15 @@ pub const MotionObject = struct {
 
 pub const GameState = struct {
     //input from platform layer:
-    trackball_position: V2 = ZV2,
-    button_pressed: bool = false,
-    dt: toolbox.Duration = .{},
-    number_of_credits: isize = 0, //$$CRDT or $CNCT
+    input_trackball_position: V2 = ZV2,
+    input_button_pressed: bool = false,
+    input_dt: toolbox.Duration = .{},
+    input_credits: isize = 0, //$$CRDT or $CNCT
 
     //output to platform layer:
-    motion_objects: [MAX_NUMBER_OF_ENTITIES * MOTION_OBJECTS_PER_ENTITY]MotionObject =
+    output_motion_objects: [MAX_NUMBER_OF_ENTITIES * MOTION_OBJECTS_PER_ENTITY]MotionObject =
         [_]MotionObject{.{}} ** (MAX_NUMBER_OF_ENTITIES * MOTION_OBJECTS_PER_ENTITY),
-    draw_command_queue: toolbox.RingQueue(DrawCommand),
+    output_draw_command_queue: toolbox.RingQueue(DrawCommand),
     number_of_draw_commands_this_frame: usize = 0,
 
     //Internal game state
@@ -868,13 +868,13 @@ pub fn init(game_state: *GameState, global_arena: *toolbox.Arena) void {
     const draw_line_command_queue =
         toolbox.RingQueue(DrawCommand).init(10_000, global_arena);
     game_state.global_arena = global_arena;
-    game_state.draw_command_queue = draw_line_command_queue;
+    game_state.output_draw_command_queue = draw_line_command_queue;
 
     reset(game_state);
 }
 
 pub fn reset(game_state: *GameState) void {
-    const draw_line_command_queue = game_state.draw_command_queue;
+    const draw_line_command_queue = game_state.output_draw_command_queue;
     const rand = toolbox.init_random(@bitCast(toolbox.now().microseconds()));
     const expected_test_data =
         @as([*]const ExpectedTestData, @ptrCast(@alignCast(EXPECTED_TEST_DATA)))[0 .. EXPECTED_TEST_DATA.len / @sizeOf(ExpectedTestData)];
@@ -886,7 +886,7 @@ pub fn reset(game_state: *GameState) void {
         .expected_test_data = expected_test_data,
         .button_pressed = false,
     };
-    game_state.draw_command_queue.clear();
+    game_state.output_draw_command_queue.clear();
 
     initialize_sounds();
     initialize_high_scores();
@@ -927,7 +927,7 @@ fn draw_background(game_state: *GameState) void {
             next_frame(game_state);
             break;
         }
-        game_state.background_animation_time_since_last_scanline.ticks += game_state.dt.ticks;
+        game_state.background_animation_time_since_last_scanline.ticks += game_state.input_dt.ticks;
         if (game_state.background_animation_time_since_last_scanline.milliseconds() >=
             BACKGROUND_ANIMATION_MS_PER_SCANLINE)
         {
@@ -1045,8 +1045,8 @@ fn update_entities(game_state: *GameState) void {
         //@     SUB TR.J
         //@     STA TR.YD
         //@     STX TR.J
-        var trackball_delta = game_state.trackball_position - game_state.last_trackball_position;
-        game_state.last_trackball_position = game_state.trackball_position;
+        var trackball_delta = game_state.input_trackball_position - game_state.last_trackball_position;
+        game_state.last_trackball_position = game_state.input_trackball_position;
 
         //@     RTS
 
@@ -3287,8 +3287,8 @@ fn update_elevators(game_state: *GameState) void {
 
 //EN.BRD
 inline fn read_button(game_state: *GameState) bool {
-    game_state.jump_button_pressed = game_state.button_pressed;
-    return game_state.button_pressed;
+    game_state.jump_button_pressed = game_state.input_button_pressed;
+    return game_state.input_button_pressed;
 }
 
 //EN.EWC
@@ -4662,7 +4662,7 @@ fn draw_motion_objects(
     // which is unncessary here.
     for (0..MOTION_OBJECTS_PER_ENTITY) |i| {
         const motion_object =
-            &game_state.motion_objects[motion_objects_cursor.*];
+            &game_state.output_motion_objects[motion_objects_cursor.*];
         const effective_position =
             game_state.entity_position[entity] +
             game_state.entity_motion_object_offsets[entity][i];
@@ -5942,7 +5942,7 @@ fn update_attract_mode_state(game_state: *GameState) void {
 
     //@    LDA $$CRDT
     //@    IFNE
-    if (game_state.number_of_credits > 0) {
+    if (game_state.input_credits > 0) {
         start_button_decode(game_state);
         //@     JSR MN.SBD        ;  start button decode
         //@    ENDIF
@@ -5979,7 +5979,7 @@ fn update_attract_mode_state(game_state: *GameState) void {
         //@     ENDIF
         //@     ENDIF
         //@     JSR WR.DRW
-        const word: isize = if (game_state.number_of_credits > 0) 0x10 else 0xA;
+        const word: isize = if (game_state.input_credits > 0) 0x10 else 0xA;
         draw_word(
             word,
             &word_position,
@@ -6035,7 +6035,7 @@ fn update_attract_mode_state(game_state: *GameState) void {
 
         //@    JSR DG.2OT
         draw_2_digit_number_suppress_leading_zero(
-            game_state.number_of_credits,
+            game_state.input_credits,
             word_position,
             game_state,
         );
@@ -6061,7 +6061,7 @@ fn update_attract_mode_state(game_state: *GameState) void {
     //@    LDA $$CRDT
     //@    ORA $CNCT    ;  no half credits
     //@    IFEQ
-    if (game_state.number_of_credits == 0) {
+    if (game_state.input_credits == 0) {
 
         //@    DEC MN.DEL
         //@    IFEQ
@@ -6207,7 +6207,7 @@ fn update_game_play_state(game_state: *GameState) void {
     if (game_state.is_in_attract_mode) {
         //@      LDA $$CRDT
         //@      IFNE
-        if (game_state.number_of_credits > 0) {
+        if (game_state.input_credits > 0) {
             //@       JSR GM.AT0
             init_attract_mode(game_state);
             //@      ENDIF
@@ -6693,7 +6693,7 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
             frame_handler(game_state);
             //@       LDA $$CRDT
             //@       BNE 30$
-            if (game_state.number_of_credits > 0) {
+            if (game_state.input_credits > 0) {
                 break;
             }
             //@       DEC MN.DEL
@@ -6717,7 +6717,7 @@ fn init_explaination_board_state(game_state: *GameState) void {
     //@     LDA $$CRDT
     //@     ORA $CNCT
     //@     IFEQ
-    if (game_state.number_of_credits == 0) {
+    if (game_state.input_credits == 0) {
         //@      JSR GR.SCL
         clear_screen(game_state);
         //@      LDA #23    ;  draw it if no pending coins
@@ -6751,7 +6751,7 @@ fn update_explaination_board_state(game_state: *GameState) void {
     //@     LDA $$CRDT
     //@     ORA $CNCT
     //@     BNE 10$
-    if (game_state.number_of_credits == 0) {
+    if (game_state.input_credits == 0) {
 
         //@     JSR EN.BRD
 
@@ -6768,7 +6768,7 @@ fn update_explaination_board_state(game_state: *GameState) void {
     game_state.main_loop_delay -= 1;
     //@     IFEQ
     //@ 10$:
-    if (button or game_state.number_of_credits > 0 or game_state.main_loop_delay == 0) {
+    if (button or game_state.input_credits > 0 or game_state.main_loop_delay == 0) {
         //@      JSR GR.SCL
         clear_screen(game_state);
         //@      JSR GM.AT0
@@ -7962,7 +7962,7 @@ fn clear_screen_old(game_state: *GameState) void {
 //@ ;  hide all motion objects
 //@ GR.MCL:
 fn clear_motion_objects(game_state: *GameState) void {
-    for (&game_state.motion_objects) |*mo| {
+    for (&game_state.output_motion_objects) |*mo| {
         mo.* = .{};
     }
     //@     TR16AI MT.BU1 MT.PTR
@@ -8059,7 +8059,7 @@ fn add_draw_command(
 
     var command_copy = command;
     command_copy.position[1] -= Y_COORDINATE_OFFSET;
-    game_state.draw_command_queue.enqueue_expecting_room(
+    game_state.output_draw_command_queue.enqueue_expecting_room(
         command_copy,
     );
 
@@ -8123,7 +8123,7 @@ fn start_button_decode(game_state: *GameState) void {
     //@     IFNE
     if (button) {
         //@       DEC $$CRDT
-        game_state.number_of_credits -= 1;
+        game_state.input_credits -= 1;
         //@       TRAI 0FF ST.PLY
         //NOTE: ST.PLY seems to only be used in the VBlank handler, which we don't have
 

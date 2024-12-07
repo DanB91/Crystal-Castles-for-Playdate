@@ -97,31 +97,31 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
         const is_running = pdapi.is_button_down(pdapi.BUTTON_B);
         const delta: isize = if (is_running) 5 else 2;
         profiler.begin("cc.update");
-        game_state.dt = dt;
-        game_state.button_pressed = pdapi.is_button_pressed(pdapi.BUTTON_A);
+        game_state.input_dt = dt;
+        game_state.input_button_pressed = pdapi.is_button_pressed(pdapi.BUTTON_A);
         if (pdapi.is_button_down(pdapi.BUTTON_RIGHT)) {
-            game_state.trackball_position[0] += delta;
+            game_state.input_trackball_position[0] += delta;
         }
         if (pdapi.is_button_down(pdapi.BUTTON_LEFT)) {
-            game_state.trackball_position[0] -= delta;
+            game_state.input_trackball_position[0] -= delta;
         }
         if (pdapi.is_button_down(pdapi.BUTTON_UP)) {
-            game_state.trackball_position[1] += delta;
+            game_state.input_trackball_position[1] += delta;
         }
         if (pdapi.is_button_down(pdapi.BUTTON_DOWN)) {
-            game_state.trackball_position[1] -= delta;
+            game_state.input_trackball_position[1] -= delta;
         }
         fiber.yield();
         profiler.end();
     }
-    const command_count: usize = if (game_state.draw_command_queue.rcursor <=
-        game_state.draw_command_queue.wcursor)
-        game_state.draw_command_queue.wcursor -
-            game_state.draw_command_queue.rcursor
+    const command_count: usize = if (game_state.output_draw_command_queue.rcursor <=
+        game_state.output_draw_command_queue.wcursor)
+        game_state.output_draw_command_queue.wcursor -
+            game_state.output_draw_command_queue.rcursor
     else
-        (game_state.draw_command_queue.data.len -
-            game_state.draw_command_queue.rcursor) +
-            game_state.draw_command_queue.wcursor + 1;
+        (game_state.output_draw_command_queue.data.len -
+            game_state.output_draw_command_queue.rcursor) +
+            game_state.output_draw_command_queue.wcursor + 1;
     {
         profiler.begin("update_castle_bitmap");
         update_castle_bitmap(platform_state);
@@ -129,9 +129,7 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     }
 
     if (pdapi.is_button_pressed(pdapi.BUTTON_B)) {
-        if (game_state.is_in_attract_mode) {
-            game_state.number_of_credits += 1;
-        }
+        game_state.input_credits = @min(game_state.input_credits + 1, 99);
     }
     const background_image = platform_state.background_image;
 
@@ -176,7 +174,7 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
                 platform_state.dithered_motion_object_tiles
             else
                 platform_state.color_motion_object_tiles;
-            for (game_state.motion_objects) |mo| {
+            for (game_state.output_motion_objects) |mo| {
                 const tile = pdapi.get_table_bitmap(
                     tiles,
                     @intCast(mo.picture_number),
@@ -220,7 +218,7 @@ pub fn update_castle_bitmap(
     const castle_bitmap_data = pdapi.get_bitmap_data(platform_state.castle_bitmap);
 
     const game_state = platform_state.game_state;
-    while (game_state.draw_command_queue.dequeue()) |command| {
+    while (game_state.output_draw_command_queue.dequeue()) |command| {
         const StaticVars = struct {
             var line_number: isize = 0;
         };
@@ -318,7 +316,7 @@ fn draw_debug_and_profiler_hud(
     //TODO: this is too many lines.  need smaller font
     // _ = game_state;
     if (false) {
-        for (game_state.motion_objects) |mo| {
+        for (game_state.output_motion_objects) |mo| {
             const x: pdapi.Pixel = @intCast(mo.position[0]);
             const y: pdapi.Pixel = @intCast(256 - 16 - (mo.position[1] & 0xFF) - cc.Y_COORDINATE_OFFSET);
             if (mo.picture_number != 0) {
