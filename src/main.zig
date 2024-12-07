@@ -15,7 +15,8 @@ const PlatformState = struct {
 
     last_frame_time: toolbox.Duration,
     background_image: *pdapi.LCDBitmap,
-    motion_object_tiles: *pdapi.LCDBitmapTable,
+    color_motion_object_tiles: *pdapi.LCDBitmapTable,
+    dithered_motion_object_tiles: *pdapi.LCDBitmapTable,
     castle_bitmap: *pdapi.LCDBitmap,
     frame_arena: *toolbox.Arena,
     global_arena: *toolbox.Arena,
@@ -37,7 +38,8 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
             pdapi.set_refresh_rate(50);
 
             const background_image = pdapi.load_bitmap("assets/images/background");
-            const motion_object_tiles = pdapi.load_bitmap_table("assets/images/motion_objects");
+            const color_motion_object_tiles = pdapi.load_bitmap_table("assets/images/color_motion_objects");
+            const dithered_motion_object_tiles = pdapi.load_bitmap_table("assets/images/dithered_motion_objects");
             const castle_bitmap = pdapi.new_bitmap_solid_color(
                 cc.SCREEN_WIDTH,
                 cc.SCREEN_HEIGHT,
@@ -54,7 +56,8 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
             const game_state = global_arena.push(cc.GameState);
             StaticVars.platform_state = .{
                 .background_image = background_image,
-                .motion_object_tiles = motion_object_tiles,
+                .dithered_motion_object_tiles = dithered_motion_object_tiles,
+                .color_motion_object_tiles = color_motion_object_tiles,
                 .frame_arena = frame_arena,
                 .global_arena = global_arena,
                 .game_state = game_state,
@@ -167,9 +170,15 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
 
         //draw sprites, aka motion objects
         {
+            //NOTE: Dithered tiles look better on the explaination board, but the color tiles
+            //      look better during game play
+            const tiles = if (game_state.current_state == .ExplainationBoard)
+                platform_state.dithered_motion_object_tiles
+            else
+                platform_state.color_motion_object_tiles;
             for (game_state.motion_objects) |mo| {
                 const tile = pdapi.get_table_bitmap(
-                    platform_state.motion_object_tiles,
+                    tiles,
                     @intCast(mo.picture_number),
                 ).?;
                 const x: pdapi.Pixel = @intCast(mo.position[0] & 0xFF);

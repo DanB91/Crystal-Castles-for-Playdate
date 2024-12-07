@@ -853,7 +853,8 @@ const Scoreboard = struct {
     entries: [HALL_OF_FAME_SIZE]Entry = ([_]Entry{.{}} ** HALL_OF_FAME_SIZE),
 
     const Entry = struct {
-        name: toolbox.String8 = toolbox.str8lit("DAN"),
+        // name: toolbox.String8 = toolbox.str8lit("DAN"),
+        name: toolbox.String8 = toolbox.str8lit("FXL"),
         score: isize = 0,
     };
 };
