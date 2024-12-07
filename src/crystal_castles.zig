@@ -639,7 +639,7 @@ pub const GameState = struct {
     output_motion_objects: [MAX_NUMBER_OF_ENTITIES * MOTION_OBJECTS_PER_ENTITY]MotionObject =
         [_]MotionObject{.{}} ** (MAX_NUMBER_OF_ENTITIES * MOTION_OBJECTS_PER_ENTITY),
     output_draw_command_queue: toolbox.RingQueue(DrawCommand),
-    number_of_draw_commands_this_frame: usize = 0,
+    output_number_of_draw_commands_this_frame: usize = 0,
 
     //Internal game state
     global_arena: *toolbox.Arena,
@@ -879,12 +879,12 @@ pub fn reset(game_state: *GameState) void {
     const expected_test_data =
         @as([*]const ExpectedTestData, @ptrCast(@alignCast(EXPECTED_TEST_DATA)))[0 .. EXPECTED_TEST_DATA.len / @sizeOf(ExpectedTestData)];
     game_state.* = .{
-        .dt = .{},
         .global_arena = game_state.global_arena,
-        .draw_command_queue = draw_line_command_queue,
+        .input_dt = .{},
+        .input_button_pressed = false,
+        .output_draw_command_queue = draw_line_command_queue,
         .rng_state = rand,
         .expected_test_data = expected_test_data,
-        .button_pressed = false,
     };
     game_state.output_draw_command_queue.clear();
 
@@ -8035,7 +8035,7 @@ fn add_draw_command(
 
     //NOTE: 200 is arbitrarily chosen
     const MAX_DRAW_COMMANDS_PER_FRAME = 200;
-    if (game_state.number_of_draw_commands_this_frame >= MAX_DRAW_COMMANDS_PER_FRAME) {
+    if (game_state.output_number_of_draw_commands_this_frame >= MAX_DRAW_COMMANDS_PER_FRAME) {
         //TODO: add command to clear screen
         // if (game_state.draw_command_queue.is_full()) {
         flush_draw_command_queue(game_state);
@@ -8064,7 +8064,7 @@ fn add_draw_command(
     );
 
     // const MAX_DRAW_COMMANDS_PER_FRAME = game_state.draw_command_queue.data.len - 1;
-    game_state.number_of_draw_commands_this_frame += 1;
+    game_state.output_number_of_draw_commands_this_frame += 1;
 
     // if (game_state.number_of_draw_commands_this_frame >=
     //     MAX_DRAW_COMMANDS_PER_FRAME)
@@ -8074,12 +8074,12 @@ fn add_draw_command(
 }
 
 fn flush_draw_command_queue(game_state: *GameState) void {
-    if (game_state.number_of_draw_commands_this_frame > 0) {
+    if (game_state.output_number_of_draw_commands_this_frame > 0) {
         //NOTE: next_frame doesn't work if we are currently disabled by debug_should_not_yield
         //      So must be fiber.yield()
         // next_frame(game_state);
         fiber.yield();
-        game_state.number_of_draw_commands_this_frame = 0;
+        game_state.output_number_of_draw_commands_this_frame = 0;
     }
 }
 

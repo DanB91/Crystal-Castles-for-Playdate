@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) !void {
 
     const lib = b.addSharedLibrary(.{
         .name = "pdex",
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/playdate_main.zig"),
         .optimize = optimize,
         .target = b.host,
     });
@@ -47,7 +47,7 @@ pub fn build(b: *std.Build) !void {
     }));
     const elf = b.addExecutable(.{
         .name = "pdex.elf",
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/playdate_main.zig"),
         .target = playdate_target,
         .optimize = optimize,
         .pic = true,
