@@ -1,13 +1,14 @@
 const std = @import("std");
 const toolbox = @import("toolbox");
 
-const high_bits = @embedFile("136022-106.8d");
-const low_bits = @embedFile("136022-107.8b");
+const HIGH_BITS = @embedFile("136022-106.8d");
+const LOW_BITS = @embedFile("136022-107.8b");
 const PIXELS_PER_BYTE = 4;
 const TILE_W = 8;
 const TILE_H = 16;
 const TILE_BYTE_W = TILE_W / PIXELS_PER_BYTE;
 const TILE_BYTE_SIZE = TILE_H * TILE_BYTE_W;
+const TOTAL_TILES = 256;
 
 const c = @cImport({
     @cInclude("stb_image_write.h");
@@ -40,7 +41,7 @@ const COLORS = [8]u32{
 };
 pub fn main() !void {
     const sprite_image_option = false;
-    const generate_red_mask_option = false;
+    const generate_red_mask_option = true;
     if (sprite_image_option) {
         write_out_sprite_image();
     } else if (generate_red_mask_option) {
@@ -50,10 +51,38 @@ pub fn main() !void {
     }
 }
 fn generate_red_mask() void {
-    //TODO
+    var masks: [TOTAL_TILES][16]u8 = undefined;
+    for (0..TOTAL_TILES, &masks) |tile, *mask| {
+        const SCREEN_W = 8;
+        const SCREEN_H = 16;
+        var screen = [_]u32{0} ** (SCREEN_H * SCREEN_W);
+        draw_tile(tile, 0, 0, SCREEN_W, &screen);
+
+        for (0..SCREEN_H, mask) |y, *row| {
+            var mask_row: u8 = 0;
+            for (0..SCREEN_W) |x| {
+                const color = screen[y * SCREEN_W + x];
+                const RED_COLOR = 0;
+                if (color == RED_COLOR) {
+                    mask_row |= @as(u8, 0x80) >> @intCast(x);
+                }
+            }
+            row.* = mask_row;
+        }
+    }
+    toolbox.println("const RED_MASKS = [256][16]u8{{", .{});
+    for (masks) |mask| {
+        toolbox.print(".{{", .{});
+        for (mask[0 .. mask.len - 1]) |row| {
+            toolbox.print("0x{X}, ", .{row});
+        }
+
+        toolbox.print("0x{X}", .{mask[mask.len - 1]});
+        toolbox.println("}},", .{});
+    }
+    toolbox.println("}};", .{});
 }
 fn write_out_sprite_image() void {
-    const TOTAL_TILES = 256;
     const IMAGE_W = TOTAL_TILES * TILE_W;
     const IMAGE_H = TILE_H;
 
@@ -120,8 +149,8 @@ fn draw_tile(tile: usize, xpos: usize, ypos: usize, stride: usize, screen: []u32
     var x: usize = 0;
     var y: usize = 0;
     for (
-        low_bits[tile_byte_offset .. tile_byte_offset + TILE_BYTE_SIZE],
-        high_bits[tile_byte_offset .. tile_byte_offset + TILE_BYTE_SIZE],
+        LOW_BITS[tile_byte_offset .. tile_byte_offset + TILE_BYTE_SIZE],
+        HIGH_BITS[tile_byte_offset .. tile_byte_offset + TILE_BYTE_SIZE],
     ) |l, h| {
         for (0..PIXELS_PER_BYTE) |p| {
             var color_index: u32 = 0;
