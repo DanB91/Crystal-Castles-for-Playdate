@@ -1,0 +1,45 @@
+
+
+A "wave" can be thought of as level.  But looking in the manual, it says a wave is a _sub-division_ of a level.  There are 10 levels with 9 levels having 4 waves and level 10 having 1 wave.  This means there are 37 waves in the game.  Each level has different colored gems.
+
+  Waves are are stored in the 136022-102.1h ROM which is mapped to 0xA000 when the bank 1 is selected. In the code, bank 1 is selected by writing 0xFF to the bank selector. Bank 0 is selected when writing 0.   Each wave 0x400 (1KB) large.  The first 0x3C9 (969) bytes are copied into CTRAM (address 0x8000), which seems to be "city" data, which I'd imagine is the structure of the level.
+
+
+Name Space meanings
+- CT -- "City". -- The actual structure of the board in a wave.
+- CR -- "City Row" -- Seems to be some component of a city.
+- BL -- "Block"  -- Seems to be some component of a city row.
+- LN -- "Line"  -- An actual line segment that's drawn to the screen.  Lines seem to be part of what makes up a block.  It seems there is a fixed set of lines that the game draws (e.g. LN.3).
+
+
+Graphics System:
+
+- System supports 32 colors (5 bits)
+  - Colors 0-7 seem to correspond to the Motion Object's color scheme
+  - Colors 8-0xF seems to just be mirrors of colors 0-7
+  - Colors 0x10-0x1F seem to correspond to the VRAM's color scheme
+- Motion object:
+  - Only 8 colors (bits 0-2) plus a "low priority" bit (bit 3)
+  - These 8 colors (0-7) seem to directly map to the first 7 colors of the 32 colors
+- Bit mode:
+  - Byte is written to VB (6502 address 0x2) and only top nibble is used
+  - Some massaging is done to that top nibble and then stored in VRAM
+  - TODO: figure out what this massaging is
+- VRAM:
+  - Each nibble (4-bits) in VRAM represents a color.  I guess 16 colors are supported here.
+- Rendering:
+  - When rendering a pixel, these things are combined in an annoyingly complex way (see "Inputs to the priority PROM:" in ccastles.cpp) to resolve to final the 5 bit color index:
+    - 4-bit value from VRAM
+    - 3-bit color value from Motion Object
+    - Low pirority bit from Motion Object
+    - 2-bit value from Priority ROM
+
+
+Debugging Notes:
+Issue is that it seems to be attempting to draw outside of the screen. 
+Need to see if the arcade also does that, highly doubt that.
+
+The crux seems to be that game_state.castle_block_v1s[1] (BL.V1S at 0x23) and game_state.castle_block_position[1] (BL.VST at 0x22) is 232 (0xE8)
+This is caused by the fact that game_state.castle_row_position[1] (CR.VST at 0x5E) is 194 (0xC2).  There are 0x13 blocks per row, so game_state.castle_block_position[1] being 232 makes sense.  
+
+Now to see how game_state.castle_row_position[1] (CR.VST) gets 194

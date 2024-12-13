@@ -10,14 +10,17 @@ pub const THIS_PLATFORM = toolbox.Platform.Playdate;
 pub const ENABLE_PROFILER = !toolbox.IS_DEBUG;
 pub const panic = toolbox.panic_handler;
 
+const TOTAL_TILES = 256;
 const PlatformState = struct {
     game_state: *cc.GameState,
 
     last_frame_time: toolbox.Duration,
     background_image: *pdapi.LCDBitmap,
     color_motion_object_tiles: *pdapi.LCDBitmapTable,
+    motion_object_masks: [TOTAL_TILES]?[]const u8,
     dithered_motion_object_tiles: *pdapi.LCDBitmapTable,
     castle_bitmap: *pdapi.LCDBitmap,
+    castle_priority_mask: []u8,
     frame_arena: *toolbox.Arena,
     global_arena: *toolbox.Arena,
     frame_count: isize,
@@ -37,6 +40,9 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
             );
             pdapi.set_refresh_rate(50);
 
+            const frame_arena = toolbox.Arena.init(toolbox.kb(512));
+            const global_arena = toolbox.Arena.init(toolbox.mb(2));
+
             const background_image = pdapi.load_bitmap("assets/images/background");
             const color_motion_object_tiles = pdapi.load_bitmap_table("assets/images/color_motion_objects");
             const dithered_motion_object_tiles = pdapi.load_bitmap_table("assets/images/dithered_motion_objects");
@@ -45,14 +51,32 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
                 cc.SCREEN_HEIGHT,
                 .ColorClear,
             );
+            const castle_priority_mask = global_arena.push_slice_clear(
+                u8,
+                cc.SCREEN_HEIGHT * (cc.SCREEN_WIDTH / 8),
+            );
+            var masks: [TOTAL_TILES]?[]const u8 = undefined;
+            for (&masks, 0..) |*dest_ptr, i| {
+                const tile = pdapi.get_table_bitmap(
+                    color_motion_object_tiles,
+                    @intCast(i),
+                ).?;
+                const data = pdapi.get_bitmap_data(tile);
+                if (data.mask) |src| {
+                    const dest = global_arena.push_slice(u8, src.len);
+                    @memcpy(dest, src);
+                    dest_ptr.* = dest;
+                } else {
+                    dest_ptr.* = null;
+                }
+            }
+
             const font = pdapi.load_font("/System/Fonts/Roobert-10-Bold.pft");
             pdapi.set_font(font);
 
             const StaticVars = struct {
                 var platform_state: PlatformState = undefined;
             };
-            const frame_arena = toolbox.Arena.init(toolbox.kb(512));
-            const global_arena = toolbox.Arena.init(toolbox.mb(2));
             const game_state = global_arena.push(cc.GameState);
             StaticVars.platform_state = .{
                 .background_image = background_image,
@@ -63,7 +87,9 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
                 .game_state = game_state,
                 .last_frame_time = toolbox.now(),
                 .castle_bitmap = castle_bitmap,
+                .castle_priority_mask = castle_priority_mask,
                 .frame_count = 0,
+                .motion_object_masks = masks,
             };
 
             cc.init(
@@ -182,8 +208,24 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
                 const x: pdapi.Pixel = @intCast(mo.position[0] & 0xFF);
                 const y: pdapi.Pixel = @intCast(256 - 16 - (mo.position[1] & 0xFF) - cc.Y_COORDINATE_OFFSET);
 
+                const mo_data = pdapi.get_bitmap_data(tile);
+                const mo_mask = mo_data.mask orelse
+                    //TODO: figure out if this can ever be null
+                    unreachable;
+                const default_mo_mask =
+                    platform_state.motion_object_masks[@intCast(mo.picture_number)] orelse
+                    //TODO: figure out if this can ever be null
+                    unreachable;
+                @memcpy(mo_mask, default_mo_mask);
+                if (mo.low_priority) {
+                    blend_low_priority_motion_object(
+                        x,
+                        y,
+                        mo_data,
+                        platform_state.castle_priority_mask,
+                    );
+                }
                 pdapi.draw_bitmap(tile, x, y, .BitmapUnflipped);
-                // pdapi.draw_rect(x, y, 8, 16, pdapi.solid_color_to_color(.ColorBlack));
             }
         }
     }
@@ -229,35 +271,42 @@ pub fn update_castle_bitmap(
                 command.position,
                 command.color,
                 castle_bitmap_data,
+                platform_state.castle_priority_mask,
             ),
             .Line2 => draw_line2(
                 command.number_of_segments,
                 command.position,
                 command.color,
                 castle_bitmap_data,
+                platform_state.castle_priority_mask,
             ),
             .Line3 => draw_line3(
                 command.number_of_segments,
                 command.position,
                 command.color,
                 castle_bitmap_data,
+                platform_state.castle_priority_mask,
             ),
             .Character => draw_character(
                 command.character,
                 command.position,
                 command.color,
                 castle_bitmap_data,
+                platform_state.castle_priority_mask,
             ),
             .ScreenErase => screen_erase(
                 command.position,
                 command.number_of_segments,
                 castle_bitmap_data,
+                platform_state.castle_priority_mask,
             ),
             .Pixel => {
-                draw_pixel(
+                draw_color(
                     command.position,
-                    command.color == .White,
+                    command.color,
+                    0,
                     castle_bitmap_data,
+                    platform_state.castle_priority_mask,
                 );
             },
             .ClearEntireScreen => {
@@ -266,6 +315,42 @@ pub fn update_castle_bitmap(
             },
             .None => unreachable,
         }
+    }
+}
+fn blend_low_priority_motion_object(
+    dest_x: pdapi.Pixel,
+    dest_y: pdapi.Pixel,
+    mo_data: pdapi.BitmapData,
+    castle_priority_mask: []const u8,
+) void {
+    //We have made the assumption that tiles are 8x16.  This will break if this ever changes
+    const TILE_HEIGHT = 16;
+    //TODO put in init?
+    toolbox.asserteq(
+        1,
+        mo_data.row_bytes,
+        "Unexpected motion object mask byte width",
+    );
+    for (0..TILE_HEIGHT) |y| {
+        const eff_y = @as(usize, @intCast(dest_y)) + y;
+        const eff_x: usize = @intCast(dest_x);
+        //TODO: this is definitely off.... probably in the x dimension
+        //Move to bad spot and then set a breakpoint and skip ahead to the affected sprite
+        const mask_byte_start = eff_y * (cc.SCREEN_WIDTH / 8) + (eff_x / 8);
+
+        const bit_x = eff_x % 8;
+        const left_shift: u3 = @intCast(bit_x);
+        var castle_mask: u8 = castle_priority_mask[mask_byte_start] << left_shift;
+        if (bit_x != 0) {
+            const right_shift: u3 = @intCast(8 - bit_x);
+            castle_mask |=
+                castle_priority_mask[mask_byte_start + 1] >> right_shift;
+        }
+        castle_mask = ~castle_mask;
+
+        const mo_mask = &mo_data.mask.?[y];
+        //TODO red color flags
+        mo_mask.* &= castle_mask;
     }
 }
 fn draw_debug_and_profiler_hud(
@@ -389,23 +474,19 @@ fn draw_line1(
     position: cc.V2,
     color: cc.Color,
     castle_bitmap_data: pdapi.BitmapData,
+    castle_priority_mask: []u8,
 ) void {
     var cursor = position;
     const number_of_pixels: usize = @intCast(number_of_segments + 1);
 
     //TODO bounds check
     for (0..number_of_pixels) |i| {
-        const is_white_pixel = switch (color) {
-            .White => true,
-            .Black => false,
-            .Gray => gray_modulo(i),
-            .DarkGray => dark_gray_modulo(i),
-            .Red => red_modulo(i),
-        };
-        draw_pixel(
+        draw_color(
             cursor,
-            is_white_pixel,
+            color,
+            i,
             castle_bitmap_data,
+            castle_priority_mask,
         );
         cursor += .{ 1, -1 };
     }
@@ -416,6 +497,7 @@ fn draw_line2(
     position: cc.V2,
     color: cc.Color,
     castle_bitmap_data: pdapi.BitmapData,
+    castle_priority_mask: []u8,
 ) void {
     var cursor = position;
     const number_of_pixels: usize = @intCast(number_of_segments + 1);
@@ -432,17 +514,12 @@ fn draw_line2(
 
     //TODO bounds check
     for (0..number_of_pixels) |i| {
-        const is_white_pixel = switch (color) {
-            .White => true,
-            .Black => false,
-            .Gray => gray_modulo(i),
-            .DarkGray => dark_gray_modulo(i),
-            .Red => red_modulo(i),
-        };
-        draw_pixel(
+        draw_color(
             cursor,
-            is_white_pixel,
+            color,
+            i,
             castle_bitmap_data,
+            castle_priority_mask,
         );
         x_pixels_drawn += 1;
         cursor += if (@mod(x_pixels_drawn, 4) == 0) .{ -1, -1 } else .{ -1, 0 };
@@ -453,20 +530,20 @@ fn draw_line3(
     position: cc.V2,
     color: cc.Color,
     castle_bitmap_data: pdapi.BitmapData,
+    castle_priority_mask: []u8,
 ) void {
     var cursor = position;
     const number_of_pixels: usize = @intCast(number_of_segments + 1);
 
     //TODO bounds check
     for (0..number_of_pixels) |i| {
-        const is_white_pixel = switch (color) {
-            .White => true,
-            .Black => false,
-            .Gray => gray_modulo(i),
-            .DarkGray => dark_gray_modulo(i),
-            .Red => red_modulo(i),
-        };
-        draw_pixel(cursor, is_white_pixel, castle_bitmap_data);
+        draw_color(
+            cursor,
+            color,
+            i,
+            castle_bitmap_data,
+            castle_priority_mask,
+        );
         cursor -= .{ 0, 1 };
     }
 }
@@ -475,6 +552,7 @@ fn draw_character(
     position: cc.V2,
     color: cc.Color,
     castle_bitmap_data: pdapi.BitmapData,
+    castle_priority_mask: []u8,
 ) void {
     //    TRAI 000 HW.AY    ; y auto dec
     //     TRAI 0FF HW.YIN
@@ -523,17 +601,12 @@ fn draw_character(
                 //     IFCS
                 if (character_row & 0x80 != 0) {
                     //     STX VB
-                    const is_white_pixel = switch (color) {
-                        .White => true,
-                        .Black => false,
-                        .Gray => gray_modulo(i),
-                        .DarkGray => dark_gray_modulo(i),
-                        .Red => red_modulo(i),
-                    };
-                    draw_pixel(
+                    draw_color(
                         position_cursor,
-                        is_white_pixel,
+                        color,
+                        i,
                         castle_bitmap_data,
+                        castle_priority_mask,
                     );
                     i += 1;
                     //     ENDIF
@@ -565,6 +638,7 @@ fn screen_erase(
     start_position: cc.V2,
     number_of_pixel_columns_to_erase: isize,
     castle_bitmap_data: pdapi.BitmapData,
+    castle_priority_mask: []u8,
 ) void {
     //  STA TEMP1
     var column_cursor = number_of_pixel_columns_to_erase;
@@ -592,10 +666,15 @@ fn screen_erase(
             //     .ENDM
 
             //NOTE: screen erase is always black
-            draw_pixel(
+            draw_color(
                 position,
-                false,
+                .{
+                    .value = .Black,
+                    .high_priority = false,
+                },
+                0,
                 castle_bitmap_data,
+                castle_priority_mask,
             );
 
             position[1] -= 1;
@@ -613,11 +692,37 @@ fn screen_erase(
     // 20$:
     //     TRAI 0FF HW.AY
 }
+fn draw_color(
+    position: cc.V2,
+    color: cc.Color,
+    pixel_number: usize,
+    castle_bitmap_data: pdapi.BitmapData,
+    castle_priority_mask: []u8,
+) void {
+    const is_white_pixel = switch (color.value) {
+        .White => true,
+        .Black => false,
+        .Gray => gray_modulo(pixel_number),
+        .DarkGray => dark_gray_modulo(pixel_number),
+        .Red => red_modulo(pixel_number),
+        //TODO add yellow modulo
+        .Yellow => unreachable,
+    };
+    draw_pixel(
+        position,
+        is_white_pixel,
+        color.high_priority,
+        castle_bitmap_data,
+        castle_priority_mask,
+    );
+}
 
-inline fn draw_pixel(
+fn draw_pixel(
     position: cc.V2,
     is_white: bool,
+    high_priority: bool,
     castle_bitmap_data: pdapi.BitmapData,
+    castle_priority_mask: []u8,
 ) void {
     toolbox.assert(bounds_check(position), "Drawing pixel out of bounds!", .{});
     const dy = position[1];
@@ -630,6 +735,23 @@ inline fn draw_pixel(
         castle_bitmap_data.data[bitmap_index] &= ~(@as(u8, 0x80) >> @intCast(dx_bit));
     }
     castle_bitmap_data.mask.?[bitmap_index] |= @as(u8, 0x80) >> @intCast(dx_bit);
+
+    if (high_priority) {
+        castle_priority_mask[bitmap_index] |= @as(u8, 0x80) >> @intCast(dx_bit);
+    } else {
+        castle_priority_mask[bitmap_index] &= ~(@as(u8, 0x80) >> @intCast(dx_bit));
+    }
+}
+inline fn clear_pixel(
+    position: cc.V2,
+    castle_bitmap_data: pdapi.BitmapData,
+) void {
+    toolbox.assert(bounds_check(position), "Drawing pixel out of bounds!", .{});
+    const dy = position[1];
+    const dx_byte = @divTrunc(position[0], 8);
+    const dx_bit = @mod(position[0], 8);
+    const bitmap_index: usize = @intCast(dy * castle_bitmap_data.row_bytes + dx_byte);
+    castle_bitmap_data.mask.?[bitmap_index] &= ~(@as(u8, 0x80) >> @intCast(dx_bit));
 }
 
 //TODO remove.  we should not be bounds checking per pixel

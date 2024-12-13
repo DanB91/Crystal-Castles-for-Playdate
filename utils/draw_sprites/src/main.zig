@@ -39,20 +39,32 @@ const COLORS = [8]u32{
     0,
 };
 pub fn main() !void {
-    // const TOTAL_TILES = 256;
-    // const IMAGE_W = TOTAL_TILES * TILE_W;
-    // const IMAGE_H = TILE_H;
+    const sprite_image_option = false;
+    const generate_red_mask_option = false;
+    if (sprite_image_option) {
+        write_out_sprite_image();
+    } else if (generate_red_mask_option) {
+        generate_red_mask();
+    } else {
+        draw_motion_object_in_terminal(23, 2);
+    }
+}
+fn generate_red_mask() void {
+    //TODO
+}
+fn write_out_sprite_image() void {
+    const TOTAL_TILES = 256;
+    const IMAGE_W = TOTAL_TILES * TILE_W;
+    const IMAGE_H = TILE_H;
 
-    // var screen = [_]u32{0} ** (IMAGE_W * IMAGE_H);
-    // for (0..TOTAL_TILES) |tile| {
-    //     draw_tile(tile, tile * TILE_W, 0, IMAGE_W, &screen);
-    // }
-    // for (&screen) |*px| {
-    //     px.* = COLORS[@intCast(px.*)];
-    // }
-    // _ = c.stbi_write_png("sprites-table-8-16.png", IMAGE_W, IMAGE_H, 4, &screen, IMAGE_W * 4);
-    // test_in_terminal();
-    draw_motion_object_in_terminal(0xE4, 2);
+    var screen = [_]u32{0} ** (IMAGE_W * IMAGE_H);
+    for (0..TOTAL_TILES) |tile| {
+        draw_tile(tile, tile * TILE_W, 0, IMAGE_W, &screen);
+    }
+    for (&screen) |*px| {
+        px.* = COLORS[@intCast(px.*)];
+    }
+    _ = c.stbi_write_png("sprites-table-8-16.png", IMAGE_W, IMAGE_H, 4, &screen, IMAGE_W * 4);
 }
 
 fn draw_motion_object_in_terminal(tile_start: usize, comptime num_tiles: usize) void {

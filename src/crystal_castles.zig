@@ -595,12 +595,18 @@ const STARTING_LIVES = 3;
 pub const Dimension = isize;
 pub const V2 = @Vector(2, Dimension);
 pub const ZV2 = V2{ 0, 0 };
-pub const Color = enum(u8) {
-    White,
-    Red,
-    Gray,
-    DarkGray,
-    Black,
+pub const Color = struct {
+    value: Value,
+    high_priority: bool,
+
+    const Value = enum {
+        White,
+        Yellow,
+        Red,
+        Gray,
+        DarkGray,
+        Black,
+    };
 };
 const DrawCommand = struct {
     shape: Shape,
@@ -625,7 +631,7 @@ const DrawCommand = struct {
 pub const MotionObject = struct {
     picture_number: isize = 0,
     position: V2 = ZV2,
-    flags: usize = 0,
+    low_priority: bool = false,
 };
 
 pub const GameState = struct {
@@ -1707,7 +1713,7 @@ fn move_entity_to_new_square(
     //@     LDA  @EZ.MA2(Y)
     //@     AND #40
     //@     IFNE
-    if (new_flags.* & 0x40 == 0) {
+    if (new_flags.* & 0x40 != 0) {
         //@      TRAI 0 EN.PR1(X)
         game_state.entity_priority[entity][0] = 0;
     }
@@ -4670,7 +4676,7 @@ fn draw_motion_objects(
         motion_object.* = .{
             .picture_number = game_state.entity_picture[entity][i],
             .position = effective_position,
-            .flags = @bitCast(game_state.entity_priority[entity][i]),
+            .low_priority = game_state.entity_priority[entity][0] & 0x80 != 0,
         };
         motion_objects_cursor.* += 1;
     }
@@ -6616,12 +6622,16 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
         //@     STA AL.X
         x = (temp5 & 0x80) + 0xD * 6;
 
+        //0x7 for white
+        const white =
+            Color{ .value = .White, .high_priority = false };
+
         //@     LDX TEMP4
         //@     TRAM   SC.HI1(X) AL.DIG
         //@     JSR AL.DRW
         add_draw_character_command(
             ascii_to_cc(entry.name.bytes[0]),
-            .White,
+            white,
             .{ x, y },
             game_state,
         );
@@ -6632,7 +6642,7 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
         //@     JSR AL.DRW
         add_draw_character_command(
             ascii_to_cc(entry.name.bytes[1]),
-            .White,
+            white,
             .{ x, y },
             game_state,
         );
@@ -6643,7 +6653,7 @@ fn draw_hall_of_fame(upper_left_score_index: usize, game_state: *GameState) void
         //@     JSR AL.DRW
         add_draw_character_command(
             ascii_to_cc(entry.name.bytes[2]),
-            .White,
+            white,
             .{ x, y },
             game_state,
         );
@@ -7220,17 +7230,23 @@ fn set_bitmap_values_of_faces(face: u8, game_state: *GameState) void {
 fn color_value_to_color(color_value: u8) Color {
 
     //Only top 4 bits are used
-    return switch ((color_value >> 4) & 0xF) {
-        0xF, 0x9, 0x7, 0x1 => .White,
-        0xA, 0x2 => .Gray,
-        0xB, 0x3 => .DarkGray,
-        0xC, 0x4, 0 => .Black,
-        0xD => .Red,
+    const value: Color.Value = switch ((color_value >> 4) & 0xF) {
+        0x0, 0x4, 0x8, 0xC => .Black,
+        0x1, 0x7, 0x9, 0xF => .White,
+        0x2, 0xA => .Gray,
+        0x3, 0xB => .DarkGray,
+        0x5, 0xD => .Red,
+        0x6, 0xE => .Yellow,
         else => toolbox.panic("Unknown color value: {}", .{color_value}),
         //@0...0x9 => .White,
         //@0xA...0xC => .Gray,
         //@else => .Black,
     };
+    const result = Color{
+        .value = value,
+        .high_priority = (color_value >> 4) & 0x8 != 0,
+    };
+    return result;
 }
 
 //@;------------------------------------
