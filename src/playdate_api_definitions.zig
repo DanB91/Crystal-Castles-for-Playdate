@@ -146,12 +146,15 @@ pub const PlaydateSys = extern struct {
         ...,
     ) callconv(.c) c_int,
 
-    const VaList = std.builtin.VaList;
-    //NOTE: std.builtin.VaList is not available when targeting Playdate hardware,
+    //NOTE(Daniel Bokser): std.builtin.VaList is not available when targeting Playdate hardware,
     //      so we need to directly include it
-    // const VaList = @cImport({
-    //     @cInclude("stdarg.h");
-    // }).va_list;
+    const VaList = if (builtin.os.tag == .windows)
+        @import("win_stdarg").va_list
+    else
+        //NOTE(Daniel Bokser):
+        //  We must use std.builtin.VaList when building for the Linux simulator.
+        //  Using stdarg.h results in a compiler error otherwise.
+        std.builtin.VaList;
 };
 
 ////////LCD and Graphics///////////////////////

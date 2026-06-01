@@ -27,15 +27,15 @@ pub fn build(b: *std.Build) !void {
     });
     const FORCE_COMPILE_M1_MAC = false;
     const supported_targets = [_]std.Build.ResolvedTarget{
-        // host_or_cross_target(
-        //     b,
-        //     .{
-        //         .abi = .msvc,
-        //         .os_tag = .windows,
-        //         .cpu_arch = .x86_64,
-        //     },
-        //     false,
-        // ),
+        host_or_cross_target(
+            b,
+            .{
+                .abi = .msvc,
+                .os_tag = .windows,
+                .cpu_arch = .x86_64,
+            },
+            false,
+        ),
         host_or_cross_target(
             b,
             .{
@@ -93,10 +93,6 @@ pub fn build(b: *std.Build) !void {
         elf.root_module.omit_frame_pointer = true;
     }
     _ = writer.addCopyFile(elf.getEmittedBin(), "pdex.elf");
-    // _ = writer.addCopyFile(b.path("pdxinfo"), "pdxinfo");
-
-    _ = writer.addCopyFile(elf.getEmittedBin(), "pdex.elf");
-
     try addCopyDirectory(writer, "assets", "./assets", io);
 
     const playdate_sdk_path = b.graph.environ_map.get("PLAYDATE_SDK_PATH") orelse return error.PLAYDATE_SDK_PATH_NOT_SET;
