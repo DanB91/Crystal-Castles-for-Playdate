@@ -6,17 +6,17 @@ const fiber = toolbox.fiber;
 pub const ENABLE_PROFILER = true; // !toolbox.IS_DEBUG;
 pub const panic = toolbox.panic_handler;
 
-pub fn main() anyerror!void {
+pub fn main() void {
     //TODO: test arena up here
     var arena = toolbox.Arena.init(toolbox.mb(1));
     defer arena.free_all();
 
     //TODO: uncomment after solving removal bug
     if (toolbox.IS_DEBUG) {
-        try run_tests(arena);
+        run_tests(arena) catch unreachable;
         // run_benchmarks();
     } else {
-        try run_tests(arena);
+        run_tests(arena) catch unreachable;
         run_benchmarks();
     }
 }
@@ -66,7 +66,11 @@ fn run_tests(arena: *toolbox.Arena) !void {
             const num_bytes = toolbox.mb(1);
             const data = toolbox.os_allocate_memory(num_bytes);
             toolbox.expecteq(num_bytes, data.len, "Wrong number of bytes allocated");
-            toolbox.expect(toolbox.is_aligned_to(@intFromPtr(data.ptr), toolbox.PAGE_SIZE), "System allocated memory should be page aligned", .{});
+            toolbox.expect(
+                toolbox.is_aligned_to(@intFromPtr(data.ptr), toolbox.PAGE_SIZE),
+                "System allocated memory should be page aligned",
+                .{},
+            );
             //os allocator should returned zero'ed memory
             for (data) |b| toolbox.expecteq(b, 0, "Memory should be zeroed from system allocator");
 
@@ -91,16 +95,16 @@ fn run_tests(arena: *toolbox.Arena) !void {
             for (bytes) |*b| b.* = 0xFF;
         }
         //test push_slice
-        const num_longs = 1024;
+        const num_ints = 1024;
         {
-            const longs = test_arena.push_slice(u64, num_longs);
-            toolbox.expecteq(num_longs, longs.len, "Wrong number of longs");
+            const ints = test_arena.push_slice(u32, num_ints);
+            toolbox.expecteq(num_ints, ints.len, "Wrong number of longs");
 
-            for (longs) |*b| b.* = 0xFFFF_FFFF_FFFF_FFFF;
+            for (ints) |*b| b.* = 0xFFFF_FFFF;
         }
         //test total_bytes_used and reset
         {
-            toolbox.expecteq(num_longs * 8 + num_bytes, test_arena.total_bytes_used(), "Wrong number of bytes used");
+            toolbox.expecteq(num_ints * 4 + num_bytes, test_arena.total_bytes_used(), "Failed 'test total_bytes_used and reset': Wrong number of bytes used");
             test_arena.reset();
             toolbox.expecteq(0, test_arena.total_bytes_used(), "Arena should be reset");
         }
@@ -109,25 +113,27 @@ fn run_tests(arena: *toolbox.Arena) !void {
             const TEST_LEN = 20;
             const bytes_z = test_arena.push_bytes_z(TEST_LEN);
             @memset(bytes_z, 0xAA);
-            const cstring = @cImport(@cInclude("string.h"));
-            const len = cstring.strlen(bytes_z.ptr);
+            const C = struct {
+                extern fn strlen(string: [*c]u8) c_int;
+            };
+            const len = C.strlen(bytes_z.ptr);
             toolbox.expecteq(TEST_LEN, bytes_z.len, "Unexpected len for push_bytes_z");
             toolbox.expecteq(TEST_LEN, len, "Unexpected strlen result for push_bytes_z");
             test_arena.reset();
         }
         //test save points
         {
-            const longs = test_arena.push_slice(u64, num_longs);
-            toolbox.expecteq(num_longs * 8, test_arena.total_bytes_used(), "Wrong number of bytes used");
-            toolbox.expecteq(num_longs, longs.len, "Wrong number of longs");
+            const ints = test_arena.push_slice(u32, num_ints);
+            toolbox.expecteq(num_ints * 4, test_arena.total_bytes_used(), "Wrong number of bytes used");
+            toolbox.expecteq(num_ints, ints.len, "Wrong number of longs");
             const save_point = test_arena.create_save_point();
             defer {
                 test_arena.restore_save_point(save_point);
-                toolbox.expecteq(num_longs * 8, test_arena.total_bytes_used(), "Wrong number of bytes used after restoring save point");
+                toolbox.expecteq(num_ints * 4, test_arena.total_bytes_used(), "Wrong number of bytes used after restoring save point");
             }
-            const longs2 = test_arena.push_slice(u64, num_longs);
-            toolbox.expecteq(num_longs * 8 * 2, test_arena.total_bytes_used(), "Wrong number of bytes used");
-            toolbox.expecteq(num_longs, longs2.len, "Wrong number of longs used");
+            const ints2 = test_arena.push_slice(u32, num_ints);
+            toolbox.expecteq(num_ints * 4 * 2, test_arena.total_bytes_used(), "Wrong number of bytes used");
+            toolbox.expecteq(num_ints, ints2.len, "Wrong number of longs used");
         }
         //test scratch arena
         {
@@ -520,43 +526,95 @@ fn run_tests(arena: *toolbox.Arena) !void {
     //ring queue
     {
         defer arena.reset();
-        var ring_queue = toolbox.RingQueue(i64).init(8, arena);
-        for (0..10) |u| {
-            const i = @as(i64, @intCast(u));
-            ring_queue.force_enqueue(i);
-        }
-        var it = ring_queue.iterator();
-        var expected: i64 = 3;
-        while (it.next()) |got| {
-            toolbox.expect(
-                expected == got,
-                "Unexpected ring queue value.  Expected: {}, Got: {}",
-                .{ expected, got },
+        const desired_cap = 1023;
+        var q = toolbox.make_not_magic_ring_queue(u64, desired_cap + 1, arena);
+        toolbox.expect(
+            q.cap() >= desired_cap,
+            "Unexpected magic ring queue capacity {}. Expected at least {}",
+            .{ q.cap(), desired_cap },
+        );
+        var n: usize = 3;
+        var total_items: u64 = 0;
+        var expected_len: usize = 0;
+        var expected_dequeued: u64 = 0;
+        var expected_enqueued: u64 = 0;
+        while (total_items < q.cap() * 2) {
+            const in = arena.push_slice(u64, n);
+            for (in, 0..) |*d, i| d.* = expected_enqueued + i;
+            expected_enqueued += in.len;
+            _ = q.enqueue(in, .PanicIfFullOrEmpty);
+            expected_len += in.len;
+
+            const out_buffer = arena.push_slice(u64, @max(n / 2, q.len() / 3));
+            const out = q.dequeue(out_buffer, .PanicIfFullOrEmpty);
+            expected_len -= out.len;
+            toolbox.expecteq(
+                out_buffer.len,
+                out.len,
+                "Should have dequeued the expected amount",
             );
-            expected += 1;
+            for (out, 0..) |x, i| {
+                toolbox.expecteq(expected_dequeued + i, x, "unexpected value dequed");
+            }
+            expected_dequeued += out.len;
+            toolbox.expecteq(
+                expected_len,
+                q.len(),
+                "Bad value from q.len()",
+            );
+            total_items += n;
+
+            n += 1;
+            n = @min(q.unoccupied(), n);
         }
     }
-    //concurrent ring queue single thread test
-    {
+    //magic ring queue
+    if (comptime toolbox.THIS_HARDWARE != .WASM32) {
         defer arena.reset();
-        var ring_queue = toolbox.MultiProducerMultiConsumerRingQueue(i64).init(8, arena);
-        for (0..10) |u| {
-            const i = @as(i64, @intCast(u));
-            ring_queue.force_enqueue(i);
-        }
-        var expected: i64 = 3;
-        while (ring_queue.dequeue()) |got| {
-            toolbox.expect(
-                expected == got,
-                "Unexpected ring queue value.  Expected: {}, Got: {}",
-                .{ expected, got },
+        const desired_cap = 1023;
+        var q = toolbox.make_magic_ring_queue(u64, desired_cap + 1, arena);
+        toolbox.expect(
+            q.cap() >= desired_cap,
+            "Unexpected magic ring queue capacity {}. Expected at least {}",
+            .{ q.cap(), desired_cap },
+        );
+        var n: usize = 3;
+        var total_items: u64 = 0;
+        var expected_len: usize = 0;
+        var expected_dequeued: u64 = 0;
+        var expected_enqueued: u64 = 0;
+        while (total_items < q.cap() * 2) {
+            const in = arena.push_slice(u64, n);
+            for (in, 0..) |*d, i| d.* = expected_enqueued + i;
+            expected_enqueued += in.len;
+            _ = q.enqueue(in, .PanicIfFullOrEmpty);
+            expected_len += in.len;
+
+            const out_buffer = arena.push_slice(u64, @max(n / 2, q.len() / 3));
+            const out = q.dequeue(out_buffer, .PanicIfFullOrEmpty);
+            expected_len -= out.len;
+            toolbox.expecteq(
+                out_buffer.len,
+                out.len,
+                "Should have dequeued the expected amount",
             );
-            expected += 1;
+            for (out, 0..) |x, i| {
+                toolbox.expecteq(expected_dequeued + i, x, "unexpected value dequed");
+            }
+            expected_dequeued += out.len;
+            toolbox.expecteq(
+                expected_len,
+                q.len(),
+                "Bad value from q.len()",
+            );
+            total_items += n;
+
+            n += 1;
+            n = @min(q.unoccupied(), n);
         }
     }
-    //MultiProducerMultiConsumerRingQueue multi thread test
-    //TODO: remove for now
-    {
+    //RingQueue multi thread test
+    if (comptime toolbox.THIS_HARDWARE != .WASM32) {
         defer arena.reset();
 
         const TestData = struct {
@@ -567,15 +625,14 @@ fn run_tests(arena: *toolbox.Arena) !void {
         const NUM_CONSUMERS = 10;
         const MAX_VALUE_DEQUEUED = 0xFFFF;
 
-        var producers_running: isize = 0;
+        var producers_running: std.atomic.Value(isize) = .{ .raw = 0 };
         var producers: [NUM_PRODUCERS]std.Thread = undefined;
         var consumers: [NUM_CONSUMERS]std.Thread = undefined;
         var max_value_dequeued = [_]i64{0} ** NUM_PRODUCERS;
-        var ring_queue =
-            toolbox.MultiProducerMultiConsumerRingQueue(TestData).init(64, arena);
+        var ring_queue = toolbox.make_concurrent_ring_queue(TestData, 1023, arena);
 
         for (&producers, 0..) |*p, i| {
-            producers_running += 1;
+            _ = producers_running.fetchAdd(1, .acq_rel);
             p.* = try std.Thread.spawn(.{}, concurrent_queue_enqueue_test_loop, .{
                 &ring_queue,
                 &producers_running,
@@ -615,12 +672,42 @@ fn run_tests(arena: *toolbox.Arena) !void {
         da.append(4, arena);
         toolbox.assert(da.len == 4, "Unexpected dynamic array length: {}", .{da.len});
         toolbox.assert(da.cap == toolbox.DYNAMIC_ARRAY_INITIAL_CAPACITY, "Unexpected dynamic array capacity: {}", .{da.len});
-        toolbox.println("Dynamic array print: {}", .{da});
+        toolbox.println("Dynamic array print: {f}", .{da});
         for (da.items(), [_]i64{ 3, 2, 1, 4 }) |actual, expected| {
             toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
         }
         da.sort();
         for (da.items(), [_]i64{ 1, 2, 3, 4 }) |actual, expected| {
+            toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
+        }
+
+        da.remove_at_index(0);
+        for (da.items(), [_]i64{ 2, 3, 4 }) |actual, expected| {
+            toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
+        }
+
+        da.insert(5, 0, arena);
+        for (da.items(), [_]i64{ 5, 2, 3, 4 }) |actual, expected| {
+            toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
+        }
+
+        da.remove_at_index(3);
+        for (da.items(), [_]i64{ 5, 2, 3 }) |actual, expected| {
+            toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
+        }
+
+        da.insert(6, 3, arena);
+        for (da.items(), [_]i64{ 5, 2, 3, 6 }) |actual, expected| {
+            toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
+        }
+
+        da.remove_at_index(2);
+        for (da.items(), [_]i64{ 5, 2, 6 }) |actual, expected| {
+            toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
+        }
+
+        da.insert(7, 2, arena);
+        for (da.items(), [_]i64{ 5, 2, 7, 6 }) |actual, expected| {
             toolbox.expecteq(expected, actual, "Incorrect value from dynamic array");
         }
     }
@@ -644,7 +731,7 @@ fn run_tests(arena: *toolbox.Arena) !void {
         da.append(val, arena);
         toolbox.assert(da.len == 4, "Unexpected dynamic array length: {}", .{da.len});
         toolbox.assert(da.cap == toolbox.DYNAMIC_ARRAY_INITIAL_CAPACITY, "Unexpected dynamic array capacity: {}", .{da.len});
-        toolbox.println("Dynamic array print: {}", .{da});
+        toolbox.println("Dynamic array print: {f}", .{da});
         for (da.items(), [_]i64{ 3, 2, 1, 4 }) |actual, expected| {
             toolbox.expecteq(expected, actual.num, "Incorrect value from dynamic array");
         }
@@ -654,7 +741,7 @@ fn run_tests(arena: *toolbox.Arena) !void {
         }
     }
     //fibers
-    {
+    if (comptime toolbox.THIS_HARDWARE != .WASM32) {
         const FiberTestFn = struct {
             fn fiber_test(til: *usize) void {
                 for (1..til.*) |i| {
@@ -678,10 +765,11 @@ fn run_tests(arena: *toolbox.Arena) !void {
             a: usize = 0x1234,
             b: []const u8 = "Hello!",
 
-            pub const format = toolbox.format_struct;
+            pub const format = toolbox.format_struct_default;
+            pub const formatNumber = toolbox.format_struct_number;
         };
         toolbox.println("Struct formatter hex: {X}", .{S{}});
-        toolbox.println("Struct formatter decimal: {}", .{S{}});
+        toolbox.println("Struct formatter decimal: {f}", .{S{}});
     }
     //profiler
     {
@@ -692,9 +780,9 @@ fn run_tests(arena: *toolbox.Arena) !void {
             toolbox.println("Total time: {}ms", .{stats.total_elapsed.milliseconds()});
             for (stats.section_statistics.items()) |stat| {
                 toolbox.expect(
-                    stat.max_time_elapsed_without_children.ticks >= stat.min_time_elapsed_without_children.ticks,
+                    stat.max_time_elapsed_with_children.ticks >= stat.min_time_elapsed_with_children.ticks,
                     "Max time elapsed: {}mcs < Min time elapsed: {}mcs",
-                    .{ stat.max_time_elapsed_without_children.ticks, stat.min_time_elapsed_without_children.ticks },
+                    .{ stat.max_time_elapsed_with_children.ticks, stat.min_time_elapsed_with_children.ticks },
                 );
                 toolbox.expect(
                     stat.time_elapsed_with_children.ticks >= stat.time_elapsed_without_children.ticks,
@@ -702,14 +790,14 @@ fn run_tests(arena: *toolbox.Arena) !void {
                     .{ stat.time_elapsed_with_children.ticks, stat.time_elapsed_without_children.ticks },
                 );
                 toolbox.expect(
-                    stat.time_elapsed_without_children.ticks >= stat.max_time_elapsed_without_children.ticks,
+                    stat.time_elapsed_with_children.ticks >= stat.max_time_elapsed_with_children.ticks,
                     "Max time elapsed without children: {}mcs >= total time elapsed without children: {}mcs",
-                    .{ stat.max_time_elapsed_without_children.ticks, stat.time_elapsed_without_children.ticks },
+                    .{ stat.max_time_elapsed_with_children.ticks, stat.time_elapsed_without_children.ticks },
                 );
                 toolbox.expect(
-                    stat.time_elapsed_without_children.ticks >= stat.min_time_elapsed_without_children.ticks,
+                    stat.time_elapsed_with_children.ticks >= stat.min_time_elapsed_with_children.ticks,
                     "Min time elapsed without children: {}mcs >= total time elapsed with children: {}mcs",
-                    .{ stat.min_time_elapsed_without_children.ticks, stat.time_elapsed_without_children.ticks },
+                    .{ stat.min_time_elapsed_with_children.ticks, stat.time_elapsed_without_children.ticks },
                 );
                 toolbox.expect(
                     stat.time_elapsed_with_children.ticks >= 0,
@@ -722,14 +810,14 @@ fn run_tests(arena: *toolbox.Arena) !void {
                     .{stat.time_elapsed_without_children.ticks},
                 );
                 toolbox.expect(
-                    stat.max_time_elapsed_without_children.ticks >= 0,
+                    stat.max_time_elapsed_with_children.ticks >= 0,
                     "Max time elapsed without children was negative: {}mcs",
-                    .{stat.max_time_elapsed_without_children.ticks},
+                    .{stat.max_time_elapsed_with_children.ticks},
                 );
                 toolbox.expect(
-                    stat.min_time_elapsed_without_children.ticks >= 0,
+                    stat.min_time_elapsed_with_children.ticks >= 0,
                     "Min time elapsed without children was negative: {}mcs",
-                    .{stat.min_time_elapsed_without_children.ticks},
+                    .{stat.min_time_elapsed_with_children.ticks},
                 );
                 toolbox.println_str8(stat.str8(arena));
             }
@@ -811,30 +899,28 @@ fn profiler_fn2(n: isize) void {
 }
 fn concurrent_queue_enqueue_test_loop(
     ring_queue: anytype,
-    producers_running: *isize,
+    producers_running: *std.atomic.Value(isize),
     thread_id: usize,
     comptime max_value: i64,
 ) void {
     for (0..max_value + 1) |n| {
-        while (!ring_queue.enqueue(.{ .n = @intCast(n), .thread_id = thread_id })) {
-            std.atomic.spinLoopHint();
-        }
+        _ = ring_queue.enqueue_one(.{ .n = @intCast(n), .thread_id = thread_id }, .Block);
     }
-    _ = @atomicRmw(isize, producers_running, .Sub, 1, .monotonic);
+    _ = producers_running.fetchSub(1, .acq_rel);
 }
 fn concurrent_queue_dequeue_test_loop(
     ring_queue: anytype,
-    producers_running: *isize,
+    producers_running: *std.atomic.Value(isize),
     max_value_dequeued: []i64,
     comptime num_producers: usize,
 ) void {
     var last_actual = [_]i64{-1} ** num_producers;
 
     var data_left = true;
-    while (@atomicLoad(isize, producers_running, .monotonic) > 0 or
+    while (producers_running.load(.acquire) > 0 or
         data_left)
     {
-        if (ring_queue.dequeue()) |test_data| {
+        if (ring_queue.dequeue_one(.AsMuchAsYouCan)) |test_data| {
             data_left = true;
             const thread_id: usize = test_data.thread_id;
             const actual = test_data.n;

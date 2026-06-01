@@ -3,7 +3,46 @@ const toolbox = @import("toolbox");
 const pddefs = @import("playdate_api_definitions.zig");
 
 pub const Pixel = i32;
-pub const LCDPatternSlice = []u8;
+pub const LCDPatternSlice = *const [16]u8;
+pub const PlaydateAPI = pddefs.PlaydateAPI;
+pub const PDSystemEvent = pddefs.PDSystemEvent;
+pub const PDButtons = pddefs.PDButtons;
+pub const PDCallbackFunction = pddefs.PDCallbackFunction;
+pub const LCDBitmapDrawMode = pddefs.LCDBitmapDrawMode;
+pub const LCDSolidColor = pddefs.LCDSolidColor;
+pub const LCDPattern = pddefs.LCDPattern;
+pub const LCDFont = pddefs.LCDFont;
+pub const PDTextWrappingMode = pddefs.PDTextWrappingMode;
+pub const PDTextAlignment = pddefs.PDTextAlignment;
+pub const LCDColor = pddefs.LCDColor;
+pub const LCDBitmapTable = pddefs.LCDBitmapTable;
+pub const LCDBitmpFlip = pddefs.LCDBitmapFlip;
+pub const LCDBitmapFlip = pddefs.LCDBitmapFlip;
+pub const LCDBitmap = pddefs.LCDBitmap;
+pub const PDMenuItemCallbackFunction = pddefs.PDMenuItemCallbackFunction;
+pub const PDMenuItem = pddefs.PDMenuItem;
+pub const SDFile = pddefs.SDFile;
+pub const FileOptions = pddefs.FileOptions;
+pub const FileStat = pddefs.FileStat;
+pub const SoundChannel = pddefs.SoundChannel;
+pub const FilePlayer = pddefs.FilePlayer;
+pub const SoundSource = pddefs.SoundSource;
+pub const SamplePlayer = pddefs.SamplePlayer;
+pub const AudioSample = pddefs.AudioSample;
+pub const MIDINote = pddefs.MIDINote;
+pub const PDSynth = pddefs.PDSynth;
+pub const SoundWaveform = pddefs.SoundWaveform;
+
+pub const FILE_READ = pddefs.FILE_READ;
+pub const LCD_COLUMNS = pddefs.LCD_COLUMNS;
+pub const LCD_ROWS = pddefs.LCD_ROWS;
+
+pub const BUTTON_LEFT = pddefs.BUTTON_LEFT;
+pub const BUTTON_RIGHT = pddefs.BUTTON_RIGHT;
+pub const BUTTON_UP = pddefs.BUTTON_UP;
+pub const BUTTON_DOWN = pddefs.BUTTON_DOWN;
+pub const BUTTON_A = pddefs.BUTTON_A;
+pub const BUTTON_B = pddefs.BUTTON_B;
 
 var pd: *pddefs.PlaydateAPI = undefined;
 var current_font: *pddefs.LCDFont = undefined;

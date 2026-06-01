@@ -1,3 +1,5 @@
+const toolbox = @import("toolbox.zig");
+
 pub const RandomState = u32;
 pub fn init_random(seed: u32) RandomState {
     return seed;
@@ -11,6 +13,9 @@ pub fn random32(state: *RandomState) u32 {
 }
 
 pub fn randomf_range(comptime min: comptime_float, comptime max: comptime_float, state: *RandomState) f32 {
-    const value: f32 = @floatFromInt(random32(state));
-    return min + ((value - 0) * (max - min) / (0xFFFF_FFFF - 0));
+    const value_int = (random32(state) >> 9) | 0x3F80_0000;
+    var value: f32 = @bitCast(value_int);
+    value -= 1;
+    const result = min + ((value - 0) * (max - min) / (1 - 0));
+    return result;
 }

@@ -23,6 +23,8 @@ pub fn str8(bytes: [:0]const u8) String8 {
     };
 }
 //NOTE: only little endian supported for now
+//TODO:
+// pub const String8 = [:0]const u8;
 pub const String8 = struct {
     bytes: [:0]const u8 = "",
 
@@ -142,9 +144,7 @@ pub const String8 = struct {
     }
 
     //for zig std.fmt
-    pub fn format(value: *const String8, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: *const String8, writer: *std.io.Writer) !void {
         try writer.writeAll(value.bytes);
     }
 };
@@ -170,7 +170,7 @@ pub const StringBuilder = struct {
         builder.bytes.append_slice(str.bytes, arena);
     }
 
-    pub fn str8(builder: StringBuilder, arena: *toolbox.Arena) toolbox.String8 {
+    pub fn str8(builder: StringBuilder, arena: *toolbox.Arena) String8 {
         const buf = arena.push_bytes_z(builder.bytes.len);
         @memcpy(buf, builder.bytes.items());
         return toolbox.str8(buf);

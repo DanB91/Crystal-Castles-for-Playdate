@@ -1,6 +1,9 @@
 const toolbox = @import("toolbox");
 const fiber = toolbox.fiber;
 const std = @import("std");
+const panic_handler = @import("panic_handler.zig");
+
+pub const panic = panic_handler.panic;
 
 pub const SCREEN_WIDTH = 256;
 pub const SCREEN_HEIGHT = 232;
@@ -872,7 +875,7 @@ const ExpectedTestData = extern struct {
 
 pub fn init(game_state: *GameState, global_arena: *toolbox.Arena) void {
     const draw_line_command_queue =
-        toolbox.RingQueue(DrawCommand).init(10_000, global_arena);
+        toolbox.make_ring_queue(DrawCommand, 10_000, global_arena);
     game_state.global_arena = global_arena;
     game_state.output_draw_command_queue = draw_line_command_queue;
 
@@ -939,9 +942,9 @@ fn draw_background(game_state: *GameState) void {
         {
             game_state.background_clip_y +=
                 @divTrunc(
-                game_state.background_animation_time_since_last_scanline.milliseconds(),
-                BACKGROUND_ANIMATION_MS_PER_SCANLINE,
-            );
+                    game_state.background_animation_time_since_last_scanline.milliseconds(),
+                    BACKGROUND_ANIMATION_MS_PER_SCANLINE,
+                );
             game_state.background_animation_time_since_last_scanline = .{};
         }
         next_frame(game_state);
@@ -2774,9 +2777,9 @@ fn killer_algorithm(entity: usize, game_state: *GameState) void {
 
     const delta =
         (@divTrunc(game_state.entity_fine_position[entity], V2{ 4, 4 }) |
-        @divTrunc(game_state.entity_playfield_position[entity], V2{ 8, 8 })) -
+            @divTrunc(game_state.entity_playfield_position[entity], V2{ 8, 8 })) -
         (@divTrunc(game_state.entity_fine_position[PLAYER_ENTITY], V2{ 4, 4 }) |
-        @divTrunc(game_state.entity_playfield_position[PLAYER_ENTITY], V2{ 8, 8 }));
+            @divTrunc(game_state.entity_playfield_position[PLAYER_ENTITY], V2{ 8, 8 }));
     const slow_speed = game_state.entity_slow_speed[entity];
     inline for (0..2) |i| {
         if (delta[i] >= 0) {
@@ -2916,8 +2919,8 @@ fn entity_life_mode_calculation(entity: usize, game_state: *GameState) void {
             //@      IFEQ
             if (game_state.entity_state[entity] == .Swarm and
                 ((game_state.wave_time & 0xFF == 0 and
-                game_state.entity_state[4] == .Honey) or
-                (game_state.wave_time >= 0x600)) and
+                    game_state.entity_state[4] == .Honey) or
+                    (game_state.wave_time >= 0x600)) and
                 game_state.wave_time >= 0x100 and
                 !game_state.entity_end_of_wave_mode and
                 !game_state.entity_is_dead[entity])
@@ -3411,9 +3414,10 @@ fn end_of_wave_calculation(game_state: *GameState) void {
         //@     IFEQA EN.MY 1
         if (game_state.wave_yco == 0 and
             @reduce(
-            .And,
-            game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
-        )) {
+                .And,
+                game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
+            ))
+        {
             //@      LDA #2
             warp_player(2, game_state);
             return;
@@ -3436,9 +3440,10 @@ fn end_of_wave_calculation(game_state: *GameState) void {
         game_state.wave_yco == 0 and
         game_state.entity_collision_delay != 0 and
         @reduce(
-        .And,
-        game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 3, 3 },
-    )) {
+            .And,
+            game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 3, 3 },
+        ))
+    {
         //@      LDA #4
         //@      JMP 10$
         warp_player(4, game_state);
@@ -3458,9 +3463,10 @@ fn end_of_wave_calculation(game_state: *GameState) void {
     if (game_state.wave_xco == 4 and
         game_state.wave_yco == 2 and
         @reduce(
-        .And,
-        game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
-    )) {
+            .And,
+            game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
+        ))
+    {
         //@      LDA #6
         //@      JMP 10$
         warp_player(6, game_state);
@@ -3479,9 +3485,10 @@ fn end_of_wave_calculation(game_state: *GameState) void {
     if (game_state.wave_xco == 5 and
         game_state.wave_yco == 3 and
         @reduce(
-        .And,
-        game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
-    )) {
+            .And,
+            game_state.entity_playfield_position[PLAYER_ENTITY] == V2{ 1, 1 },
+        ))
+    {
         //@      LDA #35
         //@      JSR MS.DRW
         _ = draw_message(0x35, game_state);
@@ -4070,11 +4077,11 @@ fn init_entities(game_state: *GameState) void {
             //@     STA        EN.XO4
             const STARTING_PLAYER_MOTION_OBJECT_POSITIONS =
                 [_]V2{
-                .{ to_isize(0xFC), 0xF - 3 },
-                .{ 4, 0xF - 3 },
-                .{ to_isize(0xFC), to_isize(0xFF - 3) },
-                .{ 4, to_isize(0xFF - 3) },
-            };
+                    .{ to_isize(0xFC), 0xF - 3 },
+                    .{ 4, 0xF - 3 },
+                    .{ to_isize(0xFC), to_isize(0xFF - 3) },
+                    .{ 4, to_isize(0xFF - 3) },
+                };
             @memcpy(
                 &game_state.entity_motion_object_offsets[entity],
                 &STARTING_PLAYER_MOTION_OBJECT_POSITIONS,
@@ -4094,11 +4101,11 @@ fn init_entities(game_state: *GameState) void {
             //@     STA     EN.XO4(X)
             const STARTING_PLAYER_MOTION_OBJECT_POSITIONS =
                 [_]V2{
-                .{ to_isize(0xFF), 0xF },
-                .{ 7, 0xF },
-                .{ to_isize(0xFF), to_isize(0xFF) },
-                .{ 7, to_isize(0xFF) },
-            };
+                    .{ to_isize(0xFF), 0xF },
+                    .{ 7, 0xF },
+                    .{ to_isize(0xFF), to_isize(0xFF) },
+                    .{ 7, to_isize(0xFF) },
+                };
             @memcpy(
                 &game_state.entity_motion_object_offsets[entity],
                 &STARTING_PLAYER_MOTION_OBJECT_POSITIONS,
@@ -4373,9 +4380,9 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
                 //@      ENDIF
                 game_state.entity_delay[entity] =
                     if (game_state.entity_state[entity] == .Swarm)
-                    0x140
-                else
-                    0x20;
+                        0x140
+                    else
+                        0x20;
             }
 
             //@      LDY WV.DF2
@@ -4412,9 +4419,9 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         //NOTE this is EN.OFF
         const playfield_index: usize =
             @intCast(
-            entity_playfield_position[0] * PLAYFIELD_HEIGHT +
-                entity_playfield_position[1],
-        );
+                entity_playfield_position[0] * PLAYFIELD_HEIGHT +
+                    entity_playfield_position[1],
+            );
         //@    AD16AM EN.MAT(X) EN.OFF
         game_state.entity_playfield_square_height_index[entity] = playfield_index;
 
@@ -4429,8 +4436,8 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
         //@    TRAM @EZ.MAT(Y) EN.HEI(X)
         game_state.entity_height[entity] =
             game_state.current_wave_data[
-            game_state.entity_playfield_square_height_index[entity]
-        ];
+                game_state.entity_playfield_square_height_index[entity]
+            ];
 
         //@;  height at 1 1 must not be 0 !!!!!!!! otherwise
         //@;  an infinite loop happens here
@@ -4487,9 +4494,9 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
     //@    STA EN.X(X)
     game_state.entity_position[entity] =
         .{
-        picture_position[0],
-        picture_position[1] + game_state.entity_height[entity],
-    };
+            picture_position[0],
+            picture_position[1] + game_state.entity_height[entity],
+        };
 
     //@; pictures
     //@    TRAI 2  EN.AND(X)
@@ -4509,8 +4516,8 @@ fn init_entity_position(entity: usize, game_state: *GameState) void {
     //TODO: figure out what these flags are
     const flags =
         game_state.current_wave_data[
-        game_state.entity_playfield_square_flags_index[entity]
-    ];
+            game_state.entity_playfield_square_flags_index[entity]
+        ];
     //@    AND #40
     //@    IFNE
     //@     TRAI 0 EN.PR1(X)
@@ -8075,9 +8082,7 @@ fn add_draw_command(
 
     var command_copy = command;
     command_copy.position[1] -= Y_COORDINATE_OFFSET;
-    game_state.output_draw_command_queue.enqueue_expecting_room(
-        command_copy,
-    );
+    _ = game_state.output_draw_command_queue.enqueue_one(command_copy, .PanicIfFullOrEmpty);
 
     // const MAX_DRAW_COMMANDS_PER_FRAME = game_state.draw_command_queue.data.len - 1;
     game_state.output_number_of_draw_commands_this_frame += 1;
@@ -8356,9 +8361,9 @@ fn new_wave(game_state: *GameState) void {
     //@    STA WV.YCD
     game_state.wave_ycd =
         if (game_state.wave_yco == 3)
-        game_state.wave_xcd + 1
-    else
-        game_state.wave_yco + 1;
+            game_state.wave_xcd + 1
+        else
+            game_state.wave_yco + 1;
 
     //@    RTS
 }

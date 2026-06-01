@@ -27,8 +27,10 @@ pub const Section = struct {
     time_elapsed_with_children: toolbox.Duration = .{},
     time_elapsed_without_children: toolbox.Duration = .{},
     last_time_elapsed_without_children: toolbox.Duration = .{},
-    min_time_elapsed_without_children: toolbox.Duration = .{},
-    max_time_elapsed_without_children: toolbox.Duration = .{},
+    //NOTE/TODO: This must be with children.
+    //           As currently architected, "without children" doesn't work in recursive functions
+    min_time_elapsed_with_children: toolbox.Duration = .{},
+    max_time_elapsed_with_children: toolbox.Duration = .{},
 
     hit_count: u32 = 0,
     label_store: [MAX_LABEL_LEN]u8 = [_]u8{0} ** MAX_LABEL_LEN,
@@ -56,12 +58,13 @@ pub fn start_profiler() void {
     }
     g_state = .{};
     g_state.is_running = true;
-    g_is_running = true;
+    @atomicStore(bool, &g_is_running, true, .release);
     g_state.start = toolbox.now();
 }
 
 pub fn begin(comptime label: []const u8) void {
-    if ((comptime !ENABLE_PROFILER) or !g_is_running or !g_state.is_running) {
+    const is_running = @atomicLoad(bool, &g_is_running, .acquire);
+    if ((comptime !ENABLE_PROFILER) or !is_running or !g_state.is_running) {
         return;
     }
     const StaticVars = struct {
@@ -88,7 +91,7 @@ pub fn begin(comptime label: []const u8) void {
         g_state.section_store[section_index] = .{
             .label_len = label.len,
             .index_address = @intFromPtr(&StaticVars.section_index),
-            .min_time_elapsed_without_children = toolbox.MAX_DURATION,
+            .min_time_elapsed_with_children = toolbox.MAX_DURATION,
         };
         section = &g_state.section_store[section_index];
         @memcpy(section.label_store[0..label.len], label);
@@ -105,7 +108,8 @@ pub fn begin(comptime label: []const u8) void {
 }
 
 pub fn end() void {
-    if ((comptime !ENABLE_PROFILER) or !g_is_running or !g_state.is_running) {
+    const is_running = @atomicLoad(bool, &g_is_running, .acquire);
+    if ((comptime !ENABLE_PROFILER) or !is_running or !g_state.is_running) {
         return;
     }
     const end_time = toolbox.now();
@@ -122,16 +126,17 @@ pub fn end() void {
     section.last_time_elapsed_without_children.ticks += elapsed.ticks;
     section.time_elapsed_with_children = elapsed.add(block.previous_time_elapsed_with_children);
 
-    section.min_time_elapsed_without_children.ticks =
-        @min(section.min_time_elapsed_without_children.ticks, section.last_time_elapsed_without_children.ticks);
-    section.max_time_elapsed_without_children.ticks =
-        @max(section.max_time_elapsed_without_children.ticks, section.last_time_elapsed_without_children.ticks);
+    section.min_time_elapsed_with_children.ticks =
+        @min(section.min_time_elapsed_with_children.ticks, section.time_elapsed_with_children.ticks);
+    section.max_time_elapsed_with_children.ticks =
+        @max(section.max_time_elapsed_with_children.ticks, section.time_elapsed_with_children.ticks);
 
     g_state.current_section_index = block.parent_section_index;
 }
 
 pub fn end_profiler() void {
-    if ((comptime !ENABLE_PROFILER) or !g_is_running) {
+    const is_running = @atomicLoad(bool, &g_is_running, .acquire);
+    if ((comptime !ENABLE_PROFILER) or !is_running) {
         return;
     }
     g_state.end = toolbox.now();
@@ -151,14 +156,46 @@ pub const SectionStatistics = struct {
     label_len: usize = 0,
     time_elapsed_without_children: toolbox.Duration = .{},
     time_elapsed_with_children: toolbox.Duration = .{},
-    min_time_elapsed_without_children: toolbox.Duration = .{},
-    max_time_elapsed_without_children: toolbox.Duration = .{},
+    min_time_elapsed_with_children: toolbox.Duration = .{},
+    max_time_elapsed_with_children: toolbox.Duration = .{},
     percent_of_profiler_total_elapsed: f32 = 0,
     percent_with_children: f32 = 0,
     hit_count: u32 = 0,
     has_children: bool = false,
 
-    pub fn str8(self: SectionStatistics, arena: *toolbox.Arena) toolbox.String8 {
+    pub const str8 = if (toolbox.THIS_PLATFORM == .Emscripten)
+        str8_emscripten
+    else
+        str8_common;
+
+    fn str8_emscripten(self: SectionStatistics, arena: *toolbox.Arena) toolbox.String8 {
+        if (self.has_children) {
+            return toolbox.str8fmt(
+                "{s}: {} hits, Total: {d:.2}mcs, {d:.2}mcs w/children, Min: {d:.2}mcs, Max: {d:.2}mcs, {d:.2}%, {d:.2}% w/children",
+                .{
+                    self.label_store[0..self.label_len],
+                    self.hit_count,
+                    self.time_elapsed_without_children.microseconds(),
+                    self.time_elapsed_with_children.microseconds(),
+                    self.min_time_elapsed_with_children.microseconds(),
+                    self.max_time_elapsed_with_children.microseconds(),
+                    self.percent_of_profiler_total_elapsed,
+                    self.percent_with_children,
+                },
+                arena,
+            );
+        } else {
+            return toolbox.str8fmt("{s}: {} hits, Total: {d:.2}mcs, Min: {d:.2}mcs, Max: {d:.2}mcs, {d:.2}%", .{
+                self.label_store[0..self.label_len],
+                self.hit_count,
+                self.time_elapsed_without_children.microseconds(),
+                self.min_time_elapsed_with_children.microseconds(),
+                self.max_time_elapsed_with_children.microseconds(),
+                self.percent_of_profiler_total_elapsed,
+            }, arena);
+        }
+    }
+    fn str8_common(self: SectionStatistics, arena: *toolbox.Arena) toolbox.String8 {
         if (self.has_children) {
             return toolbox.str8fmt(
                 "{s}: {} hits, Total: {}mcs, {}mcs w/children, Min: {}mcs, Max: {}mcs, {d:.2}%, {d:.2}% w/children",
@@ -167,8 +204,8 @@ pub const SectionStatistics = struct {
                     self.hit_count,
                     self.time_elapsed_without_children.microseconds(),
                     self.time_elapsed_with_children.microseconds(),
-                    self.min_time_elapsed_without_children.microseconds(),
-                    self.max_time_elapsed_without_children.microseconds(),
+                    self.min_time_elapsed_with_children.microseconds(),
+                    self.max_time_elapsed_with_children.microseconds(),
                     self.percent_of_profiler_total_elapsed,
                     self.percent_with_children,
                 },
@@ -179,8 +216,8 @@ pub const SectionStatistics = struct {
                 self.label_store[0..self.label_len],
                 self.hit_count,
                 self.time_elapsed_without_children.microseconds(),
-                self.min_time_elapsed_without_children.microseconds(),
-                self.max_time_elapsed_without_children.microseconds(),
+                self.min_time_elapsed_with_children.microseconds(),
+                self.max_time_elapsed_with_children.microseconds(),
                 self.percent_of_profiler_total_elapsed,
             }, arena);
         }
@@ -232,10 +269,10 @@ pub fn compute_statistics(snapshot: *const State, arena: *toolbox.Arena) Statist
                 .label_len = section.label_len,
                 .time_elapsed_without_children = section.time_elapsed_without_children,
                 .time_elapsed_with_children = section.time_elapsed_with_children,
-                .min_time_elapsed_without_children = section.min_time_elapsed_without_children,
-                .max_time_elapsed_without_children = section.max_time_elapsed_without_children,
-                .percent_of_profiler_total_elapsed = percent_of_profiler_total_elapsed,
-                .percent_with_children = percent_with_children,
+                .min_time_elapsed_with_children = section.min_time_elapsed_with_children,
+                .max_time_elapsed_with_children = section.max_time_elapsed_with_children,
+                .percent_of_profiler_total_elapsed = @floatCast(percent_of_profiler_total_elapsed),
+                .percent_with_children = @floatCast(percent_with_children),
                 .has_children = has_children,
                 .hit_count = section.hit_count,
             }, arena);
@@ -244,12 +281,12 @@ pub fn compute_statistics(snapshot: *const State, arena: *toolbox.Arena) Statist
                 .label_store = section.label_store,
                 .label_len = section.label_len,
                 .time_elapsed_without_children = section.time_elapsed_without_children,
-                .min_time_elapsed_without_children = section.min_time_elapsed_without_children,
-                .max_time_elapsed_without_children = section.max_time_elapsed_without_children,
-                .percent_of_profiler_total_elapsed = percent_of_profiler_total_elapsed,
+                .min_time_elapsed_with_children = section.min_time_elapsed_with_children,
+                .max_time_elapsed_with_children = section.max_time_elapsed_with_children,
+                .percent_of_profiler_total_elapsed = @floatCast(percent_of_profiler_total_elapsed),
                 .hit_count = section.hit_count,
                 .time_elapsed_with_children = section.time_elapsed_without_children,
-                .percent_with_children = percent_of_profiler_total_elapsed,
+                .percent_with_children = @floatCast(percent_of_profiler_total_elapsed),
             }, arena);
         }
     }

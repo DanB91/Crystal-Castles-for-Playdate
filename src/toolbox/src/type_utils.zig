@@ -5,8 +5,8 @@ pub fn is_iterable(x: anytype) bool {
     const ti = @typeInfo(T);
     const ret = switch (comptime ti) {
         .pointer => |ptr_info| switch (ptr_info.size) {
-            .Slice, .Many, .C => true,
-            .One => !is_single_pointer(ptr_info.child) and is_iterable(ptr_info.child),
+            .slice, .many, .c => true,
+            .one => !is_single_pointer(ptr_info.child) and is_iterable(ptr_info.child),
         },
         .array => true,
         else => false,
@@ -21,7 +21,7 @@ pub fn is_single_pointer(x: anytype) bool {
     const T = if (@TypeOf(x) == type) x else @TypeOf(x);
     const ti = @typeInfo(T);
     switch (comptime ti) {
-        .pointer => |ptr_info| return ptr_info.size == .One,
+        .pointer => |ptr_info| return ptr_info.size == .one,
         else => return false,
     }
 }
@@ -88,12 +88,21 @@ pub fn ptr_cast(comptime T: type, ptr: anytype) T {
     return @as(T, @ptrCast(@alignCast(ptr)));
 }
 
-pub fn format_struct(
+// //TODO
+pub fn format_struct_number(
     value: anytype,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
+    writer: *std.Io.Writer,
+    option: std.fmt.Number,
 ) !void {
+    return format_struct_common(value, writer, option);
+}
+pub fn format_struct_default(
+    value: anytype,
+    writer: *std.Io.Writer,
+) !void {
+    return format_struct_common(value, writer, null);
+}
+fn format_struct_common(value: anytype, writer: *std.Io.Writer, number_option: ?std.fmt.Number) !void {
     const Type = @TypeOf(value);
     const ti = if (@typeInfo(Type) == .pointer)
         @typeInfo(@typeInfo(Type).pointer.child)
@@ -104,26 +113,35 @@ pub fn format_struct(
         try writer.writeAll(name ++ ": ");
         switch (@typeInfo(field.type)) {
             .int, .comptime_int => {
-                if (std.mem.eql(u8, fmt, "X") or std.mem.eql(u8, fmt, "x")) {
-                    try writer.writeAll("0x");
+                if (number_option) |option| {
+                    try writer.printInt(
+                        @field(value, name),
+                        option.mode.base().?,
+                        option.case,
+                        .{
+                            .alignment = option.alignment,
+                            .fill = option.fill,
+                            .precision = option.precision,
+                            .width = option.width,
+                        },
+                    );
+                } else {
+                    try writer.printInt(
+                        @field(value, name),
+                        10,
+                        .lower,
+                        .{},
+                    );
                 }
-                try std.fmt.formatIntValue(
-                    @field(value, name),
-                    fmt,
-                    options,
-                    writer,
-                );
             },
             else => {
                 if (field.type == []const u8) {
-                    try std.fmt.format(
-                        writer,
+                    try writer.print(
                         "{s}",
                         .{@field(value, name)},
                     );
                 } else {
-                    try std.fmt.format(
-                        writer,
+                    try writer.print(
                         "{}",
                         .{@field(value, name)},
                     );
@@ -153,10 +171,10 @@ pub fn to_const_bytes(v: anytype) []const u8 {
         .pointer => |info| {
             const Child = info.child;
             switch (comptime info.size) {
-                .Slice => {
+                .slice => {
                     return @as([*]const u8, @ptrCast(v.ptr))[0 .. @sizeOf(Child) * v.len];
                 },
-                .One => {
+                .one => {
                     return @as([*]const u8, @ptrCast(v))[0..@sizeOf(Child)];
                 },
                 else => {
@@ -183,10 +201,10 @@ pub fn to_bytes(v: anytype) []u8 {
         .pointer => |info| {
             const Child = info.child;
             switch (comptime info.size) {
-                .Slice => {
+                .slice => {
                     return @as([*]u8, @ptrCast(v.ptr))[0 .. @sizeOf(Child) * v.len];
                 },
-                .One => {
+                .one => {
                     return @as([*]u8, @ptrCast(v))[0..@sizeOf(Child)];
                 },
                 else => {

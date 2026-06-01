@@ -1,10 +1,9 @@
 const toolbox = @import("toolbox.zig");
 const builtin = @import("builtin");
 const std = @import("std");
-
 comptime {
     switch (toolbox.THIS_PLATFORM) {
-        .MacOS, .Playdate, .Linux => {},
+        .MacOS, .Playdate, .Linux, .BoksOS, .Emscripten => {},
         else => {
             if (builtin.target.cpu.arch != .x86_64) {
                 @compileError("We only support AMD64 if platform isn't macOS or Playdate");
@@ -16,6 +15,7 @@ comptime {
 pub const MAX_DURATION = Duration{
     .ticks = switch (toolbox.THIS_PLATFORM) {
         .MacOS => std.math.maxInt(i64),
+        .Emscripten => std.math.floatMax(f64),
         .Playdate => std.math.floatMax(f32),
         else => std.math.maxInt(i64),
     },
@@ -25,12 +25,14 @@ pub const Duration = struct {
 
     pub const Ticks = switch (toolbox.THIS_PLATFORM) {
         .Playdate => f32,
+        .Emscripten => f64,
         else => i64,
     };
 
     const PlatformDuration = switch (toolbox.THIS_PLATFORM) {
         .MacOS, .Linux => UnixDuration,
         .Playdate => PlaydateDuration,
+        .Emscripten => EmscriptenDuration,
         else => AMD64Duration,
     };
 
@@ -57,6 +59,7 @@ pub const Nanoseconds = Milliseconds;
 pub const Microseconds = Milliseconds;
 pub const Milliseconds = switch (toolbox.THIS_PLATFORM) {
     .Playdate => i32,
+    .Emscripten => f64,
     else => i64,
 };
 pub const Seconds = switch (toolbox.THIS_PLATFORM) {
@@ -89,7 +92,29 @@ pub fn now() Duration {
             }
         },
         .Playdate => {
-            return .{ .ticks = toolbox.playdate_get_seconds() };
+            const get_seconds = toolbox.playdate_get_seconds;
+            const ticks = get_seconds();
+            return .{ .ticks = ticks };
+        },
+        .BoksOS => {
+            switch (comptime toolbox.THIS_HARDWARE) {
+                .AMD64 => {
+                    const result = amd64_read_time();
+                    return result;
+                },
+                .ARM64 => {
+                    const result = aarch64_read_time();
+                    return result;
+                },
+                else => @compileError("Unsupported hardware for BoksOS"),
+            }
+        },
+        .Emscripten => {
+            const C = struct {
+                extern fn emscripten_get_now() f64;
+            };
+            const result = Duration{ .ticks = C.emscripten_get_now() };
+            return result;
         },
         else => {
             const result = amd64_read_time();
@@ -107,6 +132,13 @@ fn amd64_read_time() Duration {
     );
     const tsc = (top << 32) | bottom;
     return .{ .ticks = @intCast(tsc) };
+}
+fn aarch64_read_time() Duration {
+    const result = asm volatile (
+        \\mrs %[ticks], cntvct_el0
+        : [ticks] "=r" (-> u64),
+    );
+    return .{ .ticks = @intCast(result) };
 }
 
 const AMD64Duration = struct {
@@ -149,6 +181,15 @@ const AMD64Duration = struct {
     }
 };
 
+const AArch64Duration = struct {
+    fn frequency() u64 {
+        const result = asm volatile ("mrs %[freq], cntfrq_el0"
+            : [freq] "r" (-> u64),
+        );
+        return result;
+    }
+};
+
 const UnixDuration = struct {
     pub inline fn from_nanoseconds(ns: Nanoseconds) Duration {
         const result = Duration{ .ticks = ns };
@@ -183,17 +224,17 @@ const UnixDuration = struct {
 };
 const PlaydateDuration = struct {
     pub inline fn from_nanoseconds(ns: Nanoseconds) Duration {
-        const ns_float: Seconds = @intFromFloat(ns);
+        const ns_float: Seconds = @floatFromInt(ns);
         const result = from_seconds(ns_float / 1_000_000_000);
         return result;
     }
     pub inline fn from_microseconds(mcs: Microseconds) Duration {
-        const mcs_float: Seconds = @intFromFloat(mcs);
+        const mcs_float: Seconds = @floatFromInt(mcs);
         const result = from_seconds(mcs_float / 1_000_000);
         return result;
     }
     pub inline fn from_milliseconds(ms: Milliseconds) Duration {
-        const ms_float: Seconds = @intFromFloat(ms);
+        const ms_float: Seconds = @floatFromInt(ms);
         const result = from_seconds(ms_float / 1000);
         return result;
     }
@@ -212,5 +253,36 @@ const PlaydateDuration = struct {
     }
     pub inline fn seconds(self: Duration) Seconds {
         return self.ticks;
+    }
+};
+
+const EmscriptenDuration = struct {
+    pub inline fn from_nanoseconds(ns: Nanoseconds) Duration {
+        const result = from_milliseconds(ns / 1_000_000);
+        return result;
+    }
+    pub inline fn from_microseconds(mcs: Microseconds) Duration {
+        const result = from_milliseconds(mcs / 1_000);
+        return result;
+    }
+    pub inline fn from_milliseconds(ms: Milliseconds) Duration {
+        const result = Duration{ .ticks = ms };
+        return result;
+    }
+    pub inline fn from_seconds(sec: Seconds) Duration {
+        const result = from_milliseconds(sec * 1_000);
+        return result;
+    }
+    pub inline fn nanoseconds(self: Duration) Nanoseconds {
+        return self.ticks * 1_000_000.0;
+    }
+    pub inline fn microseconds(self: Duration) Microseconds {
+        return self.ticks * 1_000.0;
+    }
+    pub inline fn milliseconds(self: Duration) Milliseconds {
+        return self.ticks;
+    }
+    pub inline fn seconds(self: Duration) Seconds {
+        return self.ticks / 1_000.0;
     }
 };

@@ -55,6 +55,7 @@ const Registers = switch (toolbox.THIS_HARDWARE) {
         },
         else => @compileError("AMD64 OS currently unsuported"),
     },
+    else => @compileError("Fibers currently unsupported"),
 };
 
 const Fiber = struct {
@@ -101,7 +102,7 @@ pub fn go(f: anytype, args: anytype, arena: *toolbox.Arena) void {
     const args_ptr = arena.push(Args);
     args_ptr.* = args;
     const FiberEntry = struct {
-        fn fiber_entry(arg: *Args) callconv(.C) void {
+        fn fiber_entry(arg: *Args) callconv(.c) void {
             //TODO support return values
             _ = @call(.auto, f, arg.*);
         }
@@ -114,6 +115,7 @@ pub fn go(f: anytype, args: anytype, arena: *toolbox.Arena) void {
             .msvc => go_msvc_amd64(&FiberEntry.fiber_entry, args_ptr),
             else => @compileError("Fibers unsupported on this platform!"),
         },
+        else => @compileError("Fibers currently unsupported"),
     }
     g_state.num_fibers_active += 1;
 }
@@ -387,5 +389,6 @@ comptime {
             ),
             else => @compileError("AMD64 OS currently unsuported"),
         },
+        else => @compileError("Fibers currently unsupported"),
     }
 }

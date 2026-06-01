@@ -1,6 +1,3 @@
-- Figure out the priority of colors:
-    - Are lower colors drawn behind higher colors?
-X Have dithered sprites only during the explaination state
 - Change DrawCommand to tagged union
 - Get elevators working (i.e. fill out update_elevators())
 - Fix assert firing when VALIDATE_AGAINST_ARCADE is true
@@ -26,3 +23,7 @@ X init_attract_mode_state() (GM.AT0) is not complete.  Complete it make sure its
 X Fix long delay between death and scoreboard
 X Get actual gameplay working
 X Add B to run
+X Figure out the priority of colors:
+    - See notes.txt for graphics system
+X Fix dying behind castle
+X Have dithered sprites only during the explaination state

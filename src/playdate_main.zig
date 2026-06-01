@@ -1,14 +1,14 @@
 const std = @import("std");
 const toolbox = @import("toolbox");
 const build_info = @import("build_info");
-const pdapi = @import("playdate_api.zig");
+const pdapi = @import("playdate_api_wrapper.zig");
 const cc = @import("crystal_castles.zig");
 const profiler = toolbox.profiler;
 const fiber = toolbox.fiber;
 
 pub const THIS_PLATFORM = toolbox.Platform.Playdate;
 pub const ENABLE_PROFILER = !toolbox.IS_DEBUG;
-pub const panic = toolbox.panic_handler;
+// pub const panic = toolbox.panic_handler;
 
 const TOTAL_TILES = 256;
 const RED_MASKS = [256][16]u8{
@@ -285,7 +285,7 @@ const PlatformState = struct {
     frame_count: isize,
 };
 
-pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEvent, arg: u32) callconv(.C) c_int {
+pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEvent, arg: u32) callconv(.c) c_int {
     _ = arg;
     switch (event) {
         .EventInit => {
@@ -365,7 +365,7 @@ pub export fn eventHandler(playdate: *pdapi.PlaydateAPI, event: pdapi.PDSystemEv
     return 0;
 }
 
-fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
+fn update_and_render(userdata: ?*anyopaque) callconv(.c) c_int {
     profiler.start_profiler();
     const platform_state: *PlatformState = @ptrCast(@alignCast(userdata.?));
     const game_state = platform_state.game_state;
@@ -493,9 +493,9 @@ fn update_and_render(userdata: ?*anyopaque) callconv(.C) c_int {
     {
         const build_number_str =
             toolbox.str8fmt("{}{s}", .{
-            build_info.BUILD_NUMBER,
-            if (toolbox.IS_DEBUG) "D" else "R",
-        }, platform_state.frame_arena);
+                build_info.BUILD_NUMBER,
+                if (toolbox.IS_DEBUG) "D" else "R",
+            }, platform_state.frame_arena);
         const text_width = pdapi.get_text_width(build_number_str.bytes);
         const x = pdapi.LCD_COLUMNS - text_width - 1;
         const y = pdapi.LCD_ROWS - pdapi.get_font_height() - 1;
@@ -520,7 +520,7 @@ pub fn update_castle_bitmap(
     const castle_bitmap_data = pdapi.get_bitmap_data(platform_state.castle_bitmap);
 
     const game_state = platform_state.game_state;
-    while (game_state.output_draw_command_queue.dequeue()) |command| {
+    while (game_state.output_draw_command_queue.dequeue_one(.AsMuchAsYouCan)) |command| {
         const StaticVars = struct {
             var line_number: isize = 0;
         };
@@ -593,7 +593,11 @@ fn blend_low_priority_motion_object(
         "Unexpected motion object mask byte width",
     );
     for (0..TILE_HEIGHT) |y| {
-        const eff_y = @as(usize, @intCast(dest_y)) + y;
+        const ieff_y = @as(pdapi.Pixel, @intCast(y)) + dest_y;
+        if (ieff_y < 0) {
+            continue;
+        }
+        const eff_y: usize = @intCast(ieff_y);
         const eff_x: usize = @intCast(dest_x);
         //TODO: this is definitely off.... probably in the x dimension
         //Move to bad spot and then set a breakpoint and skip ahead to the affected sprite
