@@ -29,7 +29,7 @@ Port of the 1983 Atari arcade game Crystal Castles to Playdate written in Zig.  
 
 ## Status
 
-Currently this project is on hold and haven't worked on it in over 2 years at the time of this writing. Only the attract screen and the first level are implemented. Sound is not implemented.  This repo is also a bit of a mess.  Though, I feel some of the reverse engineering scattered around that may be of interest to some people (which is the primary reason why I am releasing it now).  Will I come back to it in the future? Maybe...
+Currently this project is on hold and haven't worked on it in over 2 years at the time of this writing. Only the attract screen and the first level are implemented. Sound is not implemented.  This repo is also a bit of a mess.  Though, I feel the source code ported to a higher level language may be of interest to some people (which is the primary reason why I am releasing it now).  Will I come back to it in the future? Maybe...
 
 ## Contact
 
